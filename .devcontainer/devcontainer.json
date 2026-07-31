@@ -1,0 +1,51 @@
+{
+    "name": "Perception Experimentation Workspace",
+
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..",
+        "args": {
+            "USERNAME": "gj64",
+            "USER_UID": "1000",
+            "USER_GID": "1000"
+        }
+    },
+
+    "remoteUser": "gj64",
+    "containerUser": "gj64",
+
+    "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+
+    "mounts": [
+        "source=${localWorkspaceFolderBasename}-build,target=${containerWorkspaceFolder}/build,type=volume",
+        "source=${localWorkspaceFolderBasename}-install,target=${containerWorkspaceFolder}/install,type=volume",
+        "source=${localWorkspaceFolderBasename}-log,target=${containerWorkspaceFolder}/log,type=volume"
+    ],
+
+    "containerEnv": {
+        "ROS_DOMAIN_ID": "0",
+        "ROS_LOCALHOST_ONLY": "0"
+    },
+
+    "runArgs": [
+        "--ipc=host"
+    ],
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "ms-python.python",
+                "ms-vscode.cpptools-extension-pack"
+            ],
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+                "files.associations": {
+                    "*.rviz": "yaml"
+                }
+            }
+        }
+    }
+}

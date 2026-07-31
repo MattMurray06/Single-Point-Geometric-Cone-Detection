@@ -1,0 +1,37 @@
+#!/bin/bash
+
+set -e
+
+# New dataset location
+DATA_DIR=/workspaces/perception_wrkspace/data
+FILE_ID=1od3d58H86gFfdWPKAHL0pgHaBRkG-ppm
+ZIP_NAME=lidar_glasgow_dataset.zip
+
+mkdir -p "$DATA_DIR"
+cd "$DATA_DIR"
+
+echo "Checking disk space..."
+df -h .
+
+export PATH=$HOME/.local/bin:$PATH
+
+# Check gdown exists
+if ! command -v gdown >/dev/null 2>&1; then
+    echo "gdown not found. Installing..."
+    python3 -m pip install --user gdown
+fi
+
+echo "Installing needed package..."
+sudo apt update
+sudo apt install ros-humble-pcl-conversions
+sudo apt install '~nros-humble-rqt*'
+
+echo "Downloading dataset..."
+gdown --continue https://drive.google.com/uc?id=$FILE_ID -O $ZIP_NAME
+
+echo "Unzipping..."
+unzip -q $ZIP_NAME
+rm $ZIP_NAME
+
+echo "Done."
+
