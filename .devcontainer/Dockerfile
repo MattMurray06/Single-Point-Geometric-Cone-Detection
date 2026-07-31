@@ -24,9 +24,6 @@ RUN apt-get update \
         clang \
         clang-format \
         clang-tidy \
-        ros-humble-turtlesim \
-        ros-humble-rqt \
-        ros-humble-rqt-common-plugins \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root development user.
@@ -51,6 +48,6 @@ ENV DEBIAN_FRONTEND=
 
 USER ${USERNAME}
 
-WORKDIR /workspaces/ros2_ws
+WORKDIR /workspaces/Perception-Project
 
 CMD ["bash"]
