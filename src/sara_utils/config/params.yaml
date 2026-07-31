@@ -1,0 +1,26 @@
+dataset_publisher:
+  ros__parameters:
+    log: false
+    mode: "sequential"                  # "manual"/ "sequential"
+    replay_rate: 1.6 
+    loop: true
+
+
+    load_pcd_dir: "/workspaces/Perception-Project/data/dataset/point-clouds/xyz" # "/workspaces/SARA-Workspace/src/lidar/data/hesai-20260718-165219"
+    load_image_dir: "/workspaces/Perception-Project/data/dataset/images/left"
+    load_odometry_file: "/workspaces/Perception-Project/data/dataset/odometry.csv"
+
+
+    output_cloud_topic: "/lidar_points"
+    output_camera_topic: "camera/image"
+    output_lidar_timestamp_topic: "dataset/lidar/timestamp"
+    output_twist_topic: "/ros_can/twist"
+
+    lidar_frame_id: "hesai_lidar"
+    camera_frame_id: "camera"
+    camera_optical_frame_id: "camera_optical"
+    
+    fx: 515.0
+    fy: 515.0
+    cx: 640.0
+    cy: 360.0
