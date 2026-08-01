@@ -23,15 +23,10 @@
         "source=${localWorkspaceFolder}/../Data,target=${containerWorkspaceFolder}/data,type=bind"
     ],
 
-    "containerEnv": {
-        "ROS_DOMAIN_ID": "0",
-        "ROS_LOCALHOST_ONLY": "0"
-    },
-
-    "runArgs": [
-        "--ipc=host"
+    "appPort": [
+        "8765:8765"
     ],
-
+    
     "customizations": {
         "vscode": {
             "extensions": [

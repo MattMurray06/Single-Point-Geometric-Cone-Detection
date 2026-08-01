@@ -24,6 +24,8 @@ RUN apt-get update \
         clang \
         clang-format \
         clang-tidy \
+        ripgrep \
+        ros-humble-foxglove-bridge \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root development user.

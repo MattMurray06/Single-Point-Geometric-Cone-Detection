@@ -46,16 +46,18 @@ rclcpp_components_register_node(
 )
 
 # -------- install --------
-ament_export_targets(export_dataset_publisher_component)
 install(TARGETS dataset_publisher_component
-        EXPORT export_dataset_publisher_component
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
         RUNTIME DESTINATION lib
 )
 
-install(DIRECTORY launch
-        DESTINATION share/${PROJECT_NAME}/)
+install(
+  DIRECTORY
+    launch
+    config
+  DESTINATION share/${PROJECT_NAME}
+)
 
 # -------- testing --------
 if(BUILD_TESTING)
@@ -64,5 +66,6 @@ if(BUILD_TESTING)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
+
 
 ament_package()

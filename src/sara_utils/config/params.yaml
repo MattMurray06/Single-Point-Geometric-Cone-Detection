@@ -1,14 +1,14 @@
 dataset_publisher:
   ros__parameters:
-    log: false
-    mode: "sequential"                  # "manual"/ "sequential"
+    log: true
+    mode: "manual"                  # "manual"/ "sequential"
     replay_rate: 1.6 
     loop: true
 
 
-    load_pcd_dir: "/workspaces/Perception-Project/data/dataset/point-clouds/xyz" # "/workspaces/SARA-Workspace/src/lidar/data/hesai-20260718-165219"
-    load_image_dir: "/workspaces/Perception-Project/data/dataset/images/left"
-    load_odometry_file: "/workspaces/Perception-Project/data/dataset/odometry.csv"
+    load_pcd_dir: "/workspaces/Perception-Project/data/point-clouds/xyz" # "/workspaces/SARA-Workspace/src/lidar/data/hesai-20260718-165219"
+    load_image_dir: "/workspaces/Perception-Project/data/images/left"
+    load_odometry_file: "/workspaces/Perception-Project/data/odometry.csv"
 
 
     output_cloud_topic: "/lidar_points"
