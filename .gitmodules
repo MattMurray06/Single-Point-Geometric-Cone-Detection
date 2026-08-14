@@ -1,0 +1,3 @@
+[submodule "src/eufs_msgs"]
+	path = src/eufs_msgs
+	url = https://gitlab.com/eufs/public/eufs_msgs.git
