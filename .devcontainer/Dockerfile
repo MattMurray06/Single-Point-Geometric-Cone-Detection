@@ -24,10 +24,12 @@ RUN apt-get update \
         clang \
         clang-format \
         clang-tidy \
+        clangd \
         ripgrep \
         ros-humble-foxglove-bridge \
         libpcl-dev \
         ros-humble-pcl-conversions \
+        openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root development user.
