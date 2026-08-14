@@ -26,6 +26,8 @@ RUN apt-get update \
         clang-tidy \
         ripgrep \
         ros-humble-foxglove-bridge \
+        libpcl-dev \
+        ros-humble-pcl-conversions \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root development user.

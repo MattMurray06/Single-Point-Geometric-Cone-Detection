@@ -30,10 +30,9 @@
     "customizations": {
         "vscode": {
             "extensions": [
-                "ms-vscode.cpptools",
-                "ms-vscode.cmake-tools",
-                "ms-python.python",
-                "ms-vscode.cpptools-extension-pack"
+                "ms-vscode.cpptools-extension-pack",
+                "ranch-hand-robotics.rde-ros-2",
+                "ms-python.python"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
