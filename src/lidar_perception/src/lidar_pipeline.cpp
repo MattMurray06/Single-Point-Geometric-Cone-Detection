@@ -10,19 +10,23 @@
 namespace lidar_perception
 {
 
-std::vector<Eigen::Vector2f> LidarPipeline::run_pipeline(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr scan)
+PipelineResult LidarPipeline::run_pipeline(const PointCloud::Ptr scan)
 {
+    PipelineResult result;
     auto roi_filtered = roi_filter(scan);
-    auto filtered = ground_removal(roi_filtered);
-    auto downsampled = downsample(filtered);
+    result.roi_filtered = roi_filtered;
+    auto ground_filtered = ground_removal(roi_filtered);
+    result.ground_filtered = ground_filtered;
+    auto downsampled = downsample(ground_filtered);
+    result.downsampled = downsampled;
     auto clustered = cluster(downsampled);
     auto cones = post_process(clustered);
-    return cones;
+    //return cones;
+    return result;
 }
 
-pcl::PointCloud<pcl::PointXYZ> LidarPipeline::roi_filter(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr scan)
+PointCloud LidarPipeline::roi_filter(
+    const PointCloud::Ptr scan)
 {
     pcl::CropBox<pcl::PointXYZ> crop;
     crop.setInputCloud(scan);
@@ -30,24 +34,24 @@ pcl::PointCloud<pcl::PointXYZ> LidarPipeline::roi_filter(
     crop.setMin(Eigen::Vector4f(0.0f, -8.0f, -2.0f, 1.0f));
     crop.setMax(Eigen::Vector4f(30.0f, 8.0f, 2.0f, 1.0f));
 
-    pcl::PointCloud<pcl::PointXYZ> filtered;
+    PointCloud filtered;
     crop.filter(filtered);
 
     return filtered;
 }
 
-pcl::PointCloud<pcl::PointXYZ> LidarPipeline::ground_removal(
-    const pcl::PointCloud<pcl::PointXYZ>& scan)
+PointCloud LidarPipeline::ground_removal(
+    const PointCloud& scan)
 {
     return scan;
 }
 
-pcl::PointCloud<pcl::PointXYZ> LidarPipeline::downsample(const pcl::PointCloud<pcl::PointXYZ>& scan)
+PointCloud LidarPipeline::downsample(const pcl::PointCloud<pcl::PointXYZ>& scan)
 {
     return scan;
 }
 
-std::vector<Eigen::Vector2f> LidarPipeline::cluster(const pcl::PointCloud<pcl::PointXYZ>& scan) {
+std::vector<Eigen::Vector2f> LidarPipeline::cluster(const PointCloud& scan) {
     return {};
 }
 

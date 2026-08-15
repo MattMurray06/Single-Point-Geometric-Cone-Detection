@@ -4,6 +4,7 @@
 
 #include <eufs_msgs/msg/cone_array_with_covariance.hpp>
 #include <memory>
+#include <rclcpp/logging.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include "lidar_perception/lidar_pipeline.hpp"
@@ -17,15 +18,33 @@ class LidarNode : public rclcpp::Node
     LidarNode() : Node("lidar_node")
     {
         RCLCPP_INFO(this->get_logger(), "Lidar node started");
-        this->declare_parameter("output_cone_topic", "cones/");
-        this->declare_parameter("input_lidar_topic", "lidar_points/");
+        this->declare_parameter("input_pointcloud_topic", "lidar_points");
+        this->declare_parameter("debug", false);
+        this->declare_parameter("output_roi_topic", "debug/lidar/roi_filtered");
+        this->declare_parameter("output_ground_topic", "debug/lidar/ground_filtered");
+        this->declare_parameter("output_downsampled_topic", "debug/lidar/downsampled");
+        this->declare_parameter("output_cone_topic", "cones");
+
+        input_pointcloud_topic_ = this->get_parameter("input_pointcloud_topic").as_string();
+        debug_ = this->get_parameter("debug").as_bool();
+        output_roi_topic_ = this->get_parameter("output_roi_topic").as_string();
+        output_ground_topic_ = this->get_parameter("output_ground_topic").as_string();
+        output_downsampled_topic_ = this->get_parameter("output_downsampled_topic").as_string();
         output_cone_topic_ = this->get_parameter("output_cone_topic").as_string();
-        input_lidar_topic_ = this->get_parameter("input_lidar_topic").as_string();
 
         lidar_subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            input_lidar_topic_, rclcpp::SensorDataQoS(),
+            input_pointcloud_topic_, rclcpp::SensorDataQoS(),
             std::bind(&LidarNode::lidar_callback, this, std::placeholders::_1));
-
+        if (debug_)
+        {
+            roi_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+                output_roi_topic_, rclcpp::SensorDataQoS());
+            ground_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+                output_ground_topic_, rclcpp::SensorDataQoS());
+            downsampled_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+                output_downsampled_topic_, rclcpp::SensorDataQoS());
+            RCLCPP_INFO(this->get_logger(), "Debug publishers created");
+        }
         cone_publisher_ = this->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
             output_cone_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
     }
@@ -33,9 +52,16 @@ class LidarNode : public rclcpp::Node
    private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
     rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cone_publisher_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr roi_publisher_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr ground_publisher_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr downsampled_publisher_;
 
-    std::string input_lidar_topic_;
+    std::string input_pointcloud_topic_;
+    std::string output_roi_topic_;
+    std::string output_ground_topic_;
+    std::string output_downsampled_topic_;
     std::string output_cone_topic_;
+    bool debug_;
 
     LidarPipeline lidar_pipeline_;
 
@@ -47,14 +73,33 @@ class LidarNode : public rclcpp::Node
 
 void LidarNode::lidar_callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
 {
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud;
+    RCLCPP_DEBUG(this->get_logger(), "Lidar Callback Started");
+    auto cloud = std::make_shared<PointCloud>();
     pcl::fromROSMsg(*msg, *cloud);
 
-    auto cones = lidar_pipeline_.run_pipeline(cloud);
+    auto result = lidar_pipeline_.run_pipeline(cloud);
 
-    auto cone_msg = to_cone_array_msg(cones, msg->header);
+    if (debug_)
+    {
+        sensor_msgs::msg::PointCloud2 roi_msg;
+        pcl::toROSMsg(result.roi_filtered, roi_msg);
+        roi_msg.header = msg->header;
+        roi_publisher_->publish(roi_msg);
 
-    cone_publisher_->publish(cone_msg);
+        sensor_msgs::msg::PointCloud2 ground_msg;
+        pcl::toROSMsg(result.ground_filtered, ground_msg);
+        ground_msg.header = msg->header;
+        ground_publisher_->publish(ground_msg);
+
+        sensor_msgs::msg::PointCloud2 downsampled_msg;
+        pcl::toROSMsg(result.downsampled, downsampled_msg);
+        downsampled_msg.header = msg->header;
+        downsampled_publisher_->publish(downsampled_msg);
+    }
+
+    // auto cone_msg = to_cone_array_msg(cones, msg->header);
+
+    // cone_publisher_->publish(cone_msg);
 }
 
 eufs_msgs::msg::ConeArrayWithCovariance LidarNode::to_cone_array_msg(

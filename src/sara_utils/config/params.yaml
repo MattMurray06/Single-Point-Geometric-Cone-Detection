@@ -6,9 +6,9 @@ dataset_publisher:
     loop: true
 
 
-    load_pcd_dir: "/workspaces/Perception-Project/data/point-clouds/xyz" # "/workspaces/SARA-Workspace/src/lidar/data/hesai-20260718-165219"
-    load_image_dir: "/workspaces/Perception-Project/data/images/left"
-    load_odometry_file: "/workspaces/Perception-Project/data/odometry.csv"
+    load_pcd_dir: "/workspaces/Perception-Project/data/ugracing/point-clouds/xyz" # "/workspaces/SARA-Workspace/src/lidar/data/hesai-20260718-165219"
+    load_image_dir: "/workspaces/Perception-Project/data/ugracing/images/left"
+    load_odometry_file: "/workspaces/Perception-Project/data/ugracing/odometry.csv"
 
 
     output_cloud_topic: "/lidar_points"
