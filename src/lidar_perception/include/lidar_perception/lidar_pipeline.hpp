@@ -1,20 +1,27 @@
-#include <eufs_msgs/msg/detail/cone_array_with_covariance__struct.hpp>
-#include <pcl/impl/point_types.hpp>
+#pragma once
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
-namespace lidar_perception {
+#include <Eigen/Core>
+#include <vector>
 
-class lidar_pipeline {
-    public:
-        eufs_msgs::msg::ConeArrayWithCovariance run_pipeline(
-            const pcl::PointCloud<pcl::PointXYZ> &scan);
-    private:
+namespace lidar_perception
+{
 
-        pcl::PointCloud<pcl::PointXYZ> ground_removal(
-            const pcl::PointCloud<pcl::PointXYZ> &scan);
-        
-        pcl::PointCloud<pcl::PointXYZ> downsample(
-            const pcl::PointCloud<pcl::PointXYZ> &scan);
+class LidarPipeline
+{
+   public:
+    std::vector<Eigen::Vector2f> run_pipeline(const pcl::PointCloud<pcl::PointXYZ>::Ptr scan);
+
+   private:
+    pcl::PointCloud<pcl::PointXYZ> roi_filter(const pcl::PointCloud<pcl::PointXYZ>::Ptr scan);
+
+    pcl::PointCloud<pcl::PointXYZ> ground_removal(const pcl::PointCloud<pcl::PointXYZ>& scan);
+
+    pcl::PointCloud<pcl::PointXYZ> downsample(const pcl::PointCloud<pcl::PointXYZ>& scan);
+
+    std::vector<Eigen::Vector2f> cluster(const pcl::PointCloud<pcl::PointXYZ>& scan);
+
+    std::vector<Eigen::Vector2f> post_process(const std::vector<Eigen::Vector2f> clusters);
 };
-} // namespace lidar_perception
+}  // namespace lidar_perception

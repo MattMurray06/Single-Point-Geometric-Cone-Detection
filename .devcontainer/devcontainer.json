@@ -17,9 +17,6 @@
     "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
 
     "mounts": [
-        "source=${localWorkspaceFolderBasename}-build,target=${containerWorkspaceFolder}/build,type=volume",
-        "source=${localWorkspaceFolderBasename}-install,target=${containerWorkspaceFolder}/install,type=volume",
-        "source=${localWorkspaceFolderBasename}-log,target=${containerWorkspaceFolder}/log,type=volume",
         "source=${localWorkspaceFolder}/../Data,target=${containerWorkspaceFolder}/data,type=bind",
         "source=${localEnv:HOME}/.ssh,target=/home/${localEnv:USER}/.ssh,type=bind,consistency=cached"
     ],
@@ -33,7 +30,8 @@
             "extensions": [
                 "ms-python.python",
                 "ms-vscode.cpptools-extension-pack",
-                "ranch-hand-robotics.rde-ros-2"
+                "ranch-hand-robotics.rde-ros-2",
+                "llvm-vs-code-extensions.vscode-clangd"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",

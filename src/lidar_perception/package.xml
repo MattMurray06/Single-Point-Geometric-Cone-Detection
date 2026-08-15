@@ -11,9 +11,13 @@
 
   <depend>sensor_msgs</depend>
   <depend>pcl_conversions</depend>
+  <depend>eigen</depend>
   <depend>eufs_msgs</depend>
+  <depend>rclcpp</depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+
+  
 
   <export>
     <build_type>ament_cmake</build_type>

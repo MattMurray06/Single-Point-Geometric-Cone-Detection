@@ -1,3 +1,4 @@
-ros__parameters:
-  lidar_perception:
-    lidar_input_topic: "lidar_points/"
+lidar_node:
+  ros__parameters:
+    input_lidar_topic: /lidar_points
+    output_cone_topic: /cones
