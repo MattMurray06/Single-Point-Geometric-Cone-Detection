@@ -10,6 +10,7 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)
@@ -42,6 +43,7 @@ add_executable(lidar_node
 ament_target_dependencies(lidar_node
   rclcpp
   sensor_msgs
+  visualization_msgs
   pcl_conversions
   eufs_msgs
 )
