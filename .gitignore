@@ -4,3 +4,13 @@ log/
 .vscode/
 data/
 .cache/
+.ruff_cache/
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/

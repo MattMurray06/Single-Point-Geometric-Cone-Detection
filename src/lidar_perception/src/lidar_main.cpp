@@ -3,7 +3,10 @@
 #include <pcl_conversions/pcl_conversions.h>
 
 #include <eufs_msgs/msg/cone_array_with_covariance.hpp>
+#include <eufs_msgs/msg/cone_with_covariance.hpp>
 #include <algorithm>
+#include <eufs_msgs/msg/detail/cone_array_with_covariance__struct.hpp>
+#include <eufs_msgs/msg/detail/cone_with_covariance__struct.hpp>
 #include <limits>
 #include <memory>
 #include <rclcpp/logging.hpp>
@@ -28,6 +31,7 @@ class LidarNode : public rclcpp::Node
         this->declare_parameter("output_ground_topic", "debug/lidar/ground_filtered");
         this->declare_parameter("output_downsampled_topic", "debug/lidar/downsampled");
         this->declare_parameter("output_cluster_topic", "debug/lidar/clusters");
+        this->declare_parameter("output_cluster_info_topic", "debug/lidar/cluster_info");
         this->declare_parameter("output_cone_topic", "cones");
         this->declare_parameter("roi_min_x", 0.0);
         this->declare_parameter("roi_min_y", -8.0);
@@ -45,6 +49,7 @@ class LidarNode : public rclcpp::Node
         output_ground_topic_ = this->get_parameter("output_ground_topic").as_string();
         output_downsampled_topic_ = this->get_parameter("output_downsampled_topic").as_string();
         output_cluster_topic_ = this->get_parameter("output_cluster_topic").as_string();
+        output_cluster_info_topic_ = this->get_parameter("output_cluster_info_topic").as_string();
         output_cone_topic_ = this->get_parameter("output_cone_topic").as_string();
 
         lidar_pipeline_.set_roi_bounds(
@@ -74,6 +79,8 @@ class LidarNode : public rclcpp::Node
                 output_downsampled_topic_, rclcpp::SensorDataQoS());
             cluster_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
                 output_cluster_topic_, rclcpp::QoS(1));
+            cluster_info_publisher_ = this->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
+                output_cluster_info_topic_, rclcpp::QoS(1));
             RCLCPP_INFO(this->get_logger(), "Debug publishers created");
         }
         cone_publisher_ = this->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
@@ -87,12 +94,14 @@ class LidarNode : public rclcpp::Node
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr ground_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr downsampled_publisher_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr cluster_publisher_;
+    rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cluster_info_publisher_;
 
     std::string input_pointcloud_topic_;
     std::string output_roi_topic_;
     std::string output_ground_topic_;
     std::string output_downsampled_topic_;
     std::string output_cluster_topic_;
+    std::string output_cluster_info_topic_;
     std::string output_cone_topic_;
     bool debug_;
 
@@ -109,6 +118,9 @@ class LidarNode : public rclcpp::Node
 
     sensor_msgs::msg::PointCloud2 to_ros_msg(const PointCloud& point_cloud,
                                                             const std_msgs::msg::Header& header);
+                                                        
+    eufs_msgs::msg::ConeArrayWithCovariance cluster_info_to_ros_msg(
+        const std::vector<ClusterInfo>& info, const std_msgs::msg::Header& header);
 };
 
 void LidarNode::lidar_callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
@@ -130,6 +142,9 @@ void LidarNode::lidar_callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg
 
         cluster_publisher_->publish(
             to_cluster_markers(result.clusters, result.downsampled, msg->header));
+        cluster_info_publisher_->publish(
+           cluster_info_to_ros_msg(result.cluster_info, msg->header)
+        );
     }
 
     // auto cone_msg = to_cone_array_msg(cones, msg->header);
@@ -219,6 +234,23 @@ sensor_msgs::msg::PointCloud2 LidarNode::to_ros_msg(const PointCloud& point_clou
     sensor_msgs::msg::PointCloud2 msg;
     pcl::toROSMsg(point_cloud, msg);
     msg.header = header;
+    return msg;
+}
+
+eufs_msgs::msg::ConeArrayWithCovariance LidarNode::cluster_info_to_ros_msg(
+    const std::vector<ClusterInfo>& cluster_info, const std_msgs::msg::Header& header)
+{
+    eufs_msgs::msg::ConeArrayWithCovariance msg{};
+    msg.header = header;
+    msg.unknown_color_cones.reserve(cluster_info.size());
+    for (const auto& info : cluster_info)
+    {
+        eufs_msgs::msg::ConeWithCovariance p;
+        p.point.x = info.position.x();
+        p.point.y = info.position.y();
+        p.point.z = info.position.z();
+        msg.unknown_color_cones.push_back(p);
+    } 
     return msg;
 }
 }  // namespace lidar_perception

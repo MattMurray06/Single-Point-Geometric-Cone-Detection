@@ -6,12 +6,13 @@ lidar_node:
     output_ground_topic: debug/lidar/ground_filtered
     output_downsampled_topic: debug/lidar/downsampled
     output_cluster_topic: debug/lidar/clusters
+    output_cluster_info_topic: debug/lidar/cluster_info
     output_cone_topic: cones
     roi_min_x: 0.0
     roi_max_x: 40.0
     roi_min_y: -30.0
     roi_max_y: 30.0
-    roi_min_z: -0.63
+    roi_min_z: -0.62
     roi_max_z: 2.0
     cluster_tolerance: 0.3
     min_cluster_size: 1
