@@ -7,13 +7,31 @@ lidar_node:
     output_downsampled_topic: debug/lidar/downsampled
     output_cluster_topic: debug/lidar/clusters
     output_cluster_info_topic: debug/lidar/cluster_info
+    output_filtered_cluster_topic: debug/lidar/filtered_clusters
     output_cone_topic: cones
-    roi_min_x: 0.0
-    roi_max_x: 40.0
-    roi_min_y: -30.0
-    roi_max_y: 30.0
-    roi_min_z: -0.62
-    roi_max_z: 2.0
-    cluster_tolerance: 0.3
+    detection_roi_min_x: -40.0
+    detection_roi_max_x: 40.0
+    detection_roi_min_y: -40.0
+    detection_roi_max_y: 40.0
+    detection_roi_min_z: -0.85
+    detection_roi_max_z: 2.0
+    ground_model_roi_min_x: 0.0
+    ground_model_roi_max_x: 15.0
+    ground_model_roi_min_y: -15.0
+    ground_model_roi_max_y: 15.0
+    ground_model_roi_min_z: -0.85
+    ground_model_roi_max_z: 2.0
+    car_exclusion_min_x: -1.0
+    car_exclusion_max_x: 1.0
+    car_exclusion_min_y: -1.0
+    car_exclusion_max_y: 1.0
+    car_exclusion_min_z: -2.0
+    car_exclusion_max_z: 2.0
+    cluster_tolerance: 0.2
     min_cluster_size: 1
     max_cluster_size: 300
+    orange_cone_dx: 0.285
+    orange_cone_dy: 0.228
+    orange_cone_dz: 0.505
+    ground_z: -0.62
+    gate_tolerance: 0.1

@@ -9,10 +9,10 @@ class CPD:
         template_track = self.generate_template_track(10)
         reg = DeformableRegistration(X = cluster_centres, Y = template_track)
         # alpha = beta = 2 by default
-        reg.alpha = 0.2
+        reg.alpha = 0.06
         reg.beta = 7
-        reg.w = 0.2
-        reg.max_iterations = 500
+        reg.w = 0.01
+        reg.max_iterations = 1000
         TY, _ = reg.register()
         return TY
 

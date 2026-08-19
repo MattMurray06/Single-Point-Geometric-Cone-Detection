@@ -68,9 +68,14 @@ class CPDNode(Node):
             marker.scale.x = 0.3
             marker.scale.y = 0.3
             marker.scale.z = 0.5
-            marker.color.r = 1.0
-            marker.color.g = 0.5
-            marker.color.b = 0.0
+            if marker_id % 2 == 0:
+                marker.color.r = 0.0
+                marker.color.g = 0.35
+                marker.color.b = 1.0
+            else:
+                marker.color.r = 1.0
+                marker.color.g = 0.85
+                marker.color.b = 0.0
             marker.color.a = 1.0
             msg.markers.append(marker)
 

@@ -18,6 +18,7 @@ def generate_launch_description():
             Node(
                 package="lidar_perception",
                 executable="lidar_node",
+                output="screen",
                 arguments=["--ros-args", "--log-level", log_level],
                 parameters=[params_file],
             )

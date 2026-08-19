@@ -2,9 +2,10 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <eufs_msgs/msg/cone_array_with_covariance.hpp>
 #include <eufs_msgs/msg/cone_with_covariance.hpp>
-#include <algorithm>
 #include <eufs_msgs/msg/detail/cone_array_with_covariance__struct.hpp>
 #include <eufs_msgs/msg/detail/cone_with_covariance__struct.hpp>
 #include <limits>
@@ -32,16 +33,34 @@ class LidarNode : public rclcpp::Node
         this->declare_parameter("output_downsampled_topic", "debug/lidar/downsampled");
         this->declare_parameter("output_cluster_topic", "debug/lidar/clusters");
         this->declare_parameter("output_cluster_info_topic", "debug/lidar/cluster_info");
+        this->declare_parameter("output_filtered_cluster_topic", "debug/lidar/filtered_clusters");
         this->declare_parameter("output_cone_topic", "cones");
-        this->declare_parameter("roi_min_x", 0.0);
-        this->declare_parameter("roi_min_y", -8.0);
-        this->declare_parameter("roi_min_z", -2.0);
-        this->declare_parameter("roi_max_x", 30.0);
-        this->declare_parameter("roi_max_y", 8.0);
-        this->declare_parameter("roi_max_z", 2.0);
+        this->declare_parameter("detection_roi_min_x", 0.0);
+        this->declare_parameter("detection_roi_min_y", -40.0);
+        this->declare_parameter("detection_roi_min_z", -0.65);
+        this->declare_parameter("detection_roi_max_x", 40.0);
+        this->declare_parameter("detection_roi_max_y", 40.0);
+        this->declare_parameter("detection_roi_max_z", 2.0);
+        this->declare_parameter("ground_model_roi_min_x", 0.0);
+        this->declare_parameter("ground_model_roi_min_y", -15.0);
+        this->declare_parameter("ground_model_roi_min_z", -0.65);
+        this->declare_parameter("ground_model_roi_max_x", 15.0);
+        this->declare_parameter("ground_model_roi_max_y", 15.0);
+        this->declare_parameter("ground_model_roi_max_z", 2.0);
+        this->declare_parameter("car_exclusion_min_x", -1.0);
+        this->declare_parameter("car_exclusion_min_y", -1.0);
+        this->declare_parameter("car_exclusion_min_z", -10.0);
+        this->declare_parameter("car_exclusion_max_x", 1.0);
+        this->declare_parameter("car_exclusion_max_y", 1.0);
+        this->declare_parameter("car_exclusion_max_z", 10.0);
         this->declare_parameter("cluster_tolerance", 0.3);
         this->declare_parameter("min_cluster_size", 1);
         this->declare_parameter("max_cluster_size", 300);
+        this->declare_parameter("orange_cone_dx", 0.228);
+        this->declare_parameter("orange_cone_dy", 0.228);
+        this->declare_parameter("orange_cone_dz", 0.325);
+        this->declare_parameter("ground_z", -0.62);
+        this->declare_parameter("gate_tolerance", 0.1);
 
         input_pointcloud_topic_ = this->get_parameter("input_pointcloud_topic").as_string();
         debug_ = this->get_parameter("debug").as_bool();
@@ -50,23 +69,50 @@ class LidarNode : public rclcpp::Node
         output_downsampled_topic_ = this->get_parameter("output_downsampled_topic").as_string();
         output_cluster_topic_ = this->get_parameter("output_cluster_topic").as_string();
         output_cluster_info_topic_ = this->get_parameter("output_cluster_info_topic").as_string();
+        output_filtered_cluster_topic_ =
+            this->get_parameter("output_filtered_cluster_topic").as_string();
         output_cone_topic_ = this->get_parameter("output_cone_topic").as_string();
 
-        lidar_pipeline_.set_roi_bounds(
-            static_cast<float>(this->get_parameter("roi_min_x").as_double()),
-            static_cast<float>(this->get_parameter("roi_min_y").as_double()),
-            static_cast<float>(this->get_parameter("roi_min_z").as_double()),
-            static_cast<float>(this->get_parameter("roi_max_x").as_double()),
-            static_cast<float>(this->get_parameter("roi_max_y").as_double()),
-            static_cast<float>(this->get_parameter("roi_max_z").as_double()));
+        lidar_pipeline_.set_detection_roi_bounds(
+            static_cast<float>(this->get_parameter("detection_roi_min_x").as_double()),
+            static_cast<float>(this->get_parameter("detection_roi_min_y").as_double()),
+            static_cast<float>(this->get_parameter("detection_roi_min_z").as_double()),
+            static_cast<float>(this->get_parameter("detection_roi_max_x").as_double()),
+            static_cast<float>(this->get_parameter("detection_roi_max_y").as_double()),
+            static_cast<float>(this->get_parameter("detection_roi_max_z").as_double()));
+
+        lidar_pipeline_.set_ground_model_roi_bounds(
+            static_cast<float>(this->get_parameter("ground_model_roi_min_x").as_double()),
+            static_cast<float>(this->get_parameter("ground_model_roi_min_y").as_double()),
+            static_cast<float>(this->get_parameter("ground_model_roi_min_z").as_double()),
+            static_cast<float>(this->get_parameter("ground_model_roi_max_x").as_double()),
+            static_cast<float>(this->get_parameter("ground_model_roi_max_y").as_double()),
+            static_cast<float>(this->get_parameter("ground_model_roi_max_z").as_double()));
+
+        lidar_pipeline_.set_car_exclusion_bounds(
+            static_cast<float>(this->get_parameter("car_exclusion_min_x").as_double()),
+            static_cast<float>(this->get_parameter("car_exclusion_min_y").as_double()),
+            static_cast<float>(this->get_parameter("car_exclusion_min_z").as_double()),
+            static_cast<float>(this->get_parameter("car_exclusion_max_x").as_double()),
+            static_cast<float>(this->get_parameter("car_exclusion_max_y").as_double()),
+            static_cast<float>(this->get_parameter("car_exclusion_max_z").as_double()));
 
         lidar_pipeline_.set_cluster_parameters(
             this->get_parameter("cluster_tolerance").as_double(),
             static_cast<int>(this->get_parameter("min_cluster_size").as_int()),
             static_cast<int>(this->get_parameter("max_cluster_size").as_int()));
 
+        lidar_pipeline_.set_orange_cone_dimensions(
+            static_cast<float>(this->get_parameter("orange_cone_dx").as_double()),
+            static_cast<float>(this->get_parameter("orange_cone_dy").as_double()),
+            static_cast<float>(this->get_parameter("orange_cone_dz").as_double()));
+
+        lidar_pipeline_.set_filter_parameters(
+            static_cast<float>(this->get_parameter("ground_z").as_double()),
+            static_cast<float>(this->get_parameter("gate_tolerance").as_double()));
+
         lidar_subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            input_pointcloud_topic_, rclcpp::SensorDataQoS(),
+            input_pointcloud_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
             std::bind(&LidarNode::lidar_callback, this, std::placeholders::_1));
 
         if (debug_)
@@ -79,10 +125,13 @@ class LidarNode : public rclcpp::Node
                 output_downsampled_topic_, rclcpp::SensorDataQoS());
             cluster_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
                 output_cluster_topic_, rclcpp::QoS(1));
-            cluster_info_publisher_ = this->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
-                output_cluster_info_topic_, rclcpp::QoS(1));
+            filtered_cluster_publisher_ =
+                this->create_publisher<visualization_msgs::msg::MarkerArray>(
+                    output_filtered_cluster_topic_, rclcpp::QoS(1));
             RCLCPP_INFO(this->get_logger(), "Debug publishers created");
         }
+        cluster_info_publisher_ = this->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
+            output_cluster_info_topic_, rclcpp::QoS(1));
         cone_publisher_ = this->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
             output_cone_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
     }
@@ -95,6 +144,7 @@ class LidarNode : public rclcpp::Node
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr downsampled_publisher_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr cluster_publisher_;
     rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cluster_info_publisher_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr filtered_cluster_publisher_;
 
     std::string input_pointcloud_topic_;
     std::string output_roi_topic_;
@@ -102,12 +152,15 @@ class LidarNode : public rclcpp::Node
     std::string output_downsampled_topic_;
     std::string output_cluster_topic_;
     std::string output_cluster_info_topic_;
+    std::string output_filtered_cluster_topic_;
     std::string output_cone_topic_;
     bool debug_;
 
     LidarPipeline lidar_pipeline_;
 
     void lidar_callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
+
+    void remove_zero_points(const PointCloud::Ptr& cloud);
 
     eufs_msgs::msg::ConeArrayWithCovariance to_cone_array_msg(
         const std::vector<Eigen::Vector2f>& cones, const std_msgs::msg::Header& header);
@@ -116,9 +169,12 @@ class LidarNode : public rclcpp::Node
         const std::vector<pcl::PointIndices>& clusters, const PointCloud& point_cloud,
         const std_msgs::msg::Header& header);
 
+    visualization_msgs::msg::MarkerArray to_filtered_cluster_markers(
+        const std::vector<ClusterInfo>& clusters, const std_msgs::msg::Header& header);
+
     sensor_msgs::msg::PointCloud2 to_ros_msg(const PointCloud& point_cloud,
-                                                            const std_msgs::msg::Header& header);
-                                                        
+                                             const std_msgs::msg::Header& header);
+
     eufs_msgs::msg::ConeArrayWithCovariance cluster_info_to_ros_msg(
         const std::vector<ClusterInfo>& info, const std_msgs::msg::Header& header);
 };
@@ -128,7 +184,7 @@ void LidarNode::lidar_callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg
     RCLCPP_DEBUG(this->get_logger(), "Lidar Callback Started");
     auto cloud = std::make_shared<PointCloud>();
     pcl::fromROSMsg(*msg, *cloud);
-
+    remove_zero_points(cloud);
     auto result = lidar_pipeline_.run_pipeline(cloud);
 
     if (debug_)
@@ -142,14 +198,31 @@ void LidarNode::lidar_callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg
 
         cluster_publisher_->publish(
             to_cluster_markers(result.clusters, result.downsampled, msg->header));
-        cluster_info_publisher_->publish(
-           cluster_info_to_ros_msg(result.cluster_info, msg->header)
-        );
+        filtered_cluster_publisher_->publish(
+            to_filtered_cluster_markers(result.cluster_info, msg->header));
     }
+    cluster_info_publisher_->publish(cluster_info_to_ros_msg(result.cluster_info, msg->header));
 
     // auto cone_msg = to_cone_array_msg(cones, msg->header);
 
     // cone_publisher_->publish(cone_msg);
+}
+
+void LidarNode::remove_zero_points(const PointCloud::Ptr& cloud)
+{
+    const std::size_t original_size = cloud->size();
+    cloud->points.erase(
+        std::remove_if(
+            cloud->points.begin(), cloud->points.end(),
+            [](const pcl::PointXYZ& point)
+            {
+                return point.x == 0.0f && point.y == 0.0f && point.z == 0.0f;
+            }),
+        cloud->points.end());
+    cloud->width = static_cast<std::uint32_t>(cloud->points.size());
+    cloud->height = 1;
+
+    RCLCPP_DEBUG(this->get_logger(), "Removed %zu zero points", original_size - cloud->size());
 }
 
 eufs_msgs::msg::ConeArrayWithCovariance LidarNode::to_cone_array_msg(
@@ -228,8 +301,49 @@ visualization_msgs::msg::MarkerArray LidarNode::to_cluster_markers(
     return cluster_markers;
 }
 
+visualization_msgs::msg::MarkerArray LidarNode::to_filtered_cluster_markers(
+    const std::vector<ClusterInfo>& clusters, const std_msgs::msg::Header& header)
+{
+    visualization_msgs::msg::MarkerArray markers;
+
+    visualization_msgs::msg::Marker clear_marker;
+    clear_marker.action = visualization_msgs::msg::Marker::DELETEALL;
+    markers.markers.push_back(clear_marker);
+
+    int marker_id = 0;
+    for (const auto& cluster : clusters)
+    {
+        visualization_msgs::msg::Marker marker;
+        marker.header = header;
+        marker.ns = "filtered_clusters";
+        marker.id = marker_id++;
+        marker.type = visualization_msgs::msg::Marker::SPHERE;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.pose.position.x = cluster.position.x();
+        marker.pose.position.y = cluster.position.y();
+        marker.pose.position.z = cluster.position.z();
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.2;
+        marker.scale.y = 0.2;
+        marker.scale.z = 0.2;
+        if (cluster.high_confidence)
+        {
+            marker.color.r = 0.0f;
+            marker.color.g = 1.0f;
+        } else{
+            marker.color.r = 1.0f;
+            marker.color.g = 0.0f;
+        }
+        marker.color.b = 0.0f;
+        marker.color.a = 1.0f;
+        markers.markers.push_back(marker);
+    }
+
+    return markers;
+}
+
 sensor_msgs::msg::PointCloud2 LidarNode::to_ros_msg(const PointCloud& point_cloud,
-                                                        const std_msgs::msg::Header& header)
+                                                    const std_msgs::msg::Header& header)
 {
     sensor_msgs::msg::PointCloud2 msg;
     pcl::toROSMsg(point_cloud, msg);
@@ -250,7 +364,7 @@ eufs_msgs::msg::ConeArrayWithCovariance LidarNode::cluster_info_to_ros_msg(
         p.point.y = info.position.y();
         p.point.z = info.position.z();
         msg.unknown_color_cones.push_back(p);
-    } 
+    }
     return msg;
 }
 }  // namespace lidar_perception
