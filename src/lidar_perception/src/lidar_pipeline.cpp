@@ -14,17 +14,18 @@
 #include <Eigen/Core>
 #include <limits>
 #include <memory>
+#include <pcl/impl/point_types.hpp>
 
 namespace lidar_perception
 {
 
-PipelineResult LidarPipeline::run_pipeline(const PointCloud::Ptr scan)
+PipelineResult LidarPipeline::run_pipeline(const PointCloud::ConstPtr& scan)
 {
     PipelineResult result;
 
-    auto roi_filtered = roi_filter(scan, detection_roi_min_, detection_roi_max_);
+    auto roi_filtered = roi_filter(scan, config_.detection_roi_min, config_.detection_roi_max);
     result.roi_filtered = *roi_filtered;
-    auto ground_filtered = ground_removal(roi_filtered);
+    auto ground_filtered = ground_removal(roi_filtered, result.ground_plane);
     result.ground_filtered = *ground_filtered;
     auto downsampled = downsample(ground_filtered);
     result.downsampled = *downsampled;
@@ -37,7 +38,7 @@ PipelineResult LidarPipeline::run_pipeline(const PointCloud::Ptr scan)
     return result;
 }
 
-PointCloud::Ptr LidarPipeline::roi_filter(const PointCloud::Ptr scan,
+PointCloud::Ptr LidarPipeline::roi_filter(const PointCloud::ConstPtr& scan,
                                           const Eigen::Vector4f& min_bounds,
                                           const Eigen::Vector4f& max_bounds)
 {
@@ -47,13 +48,13 @@ PointCloud::Ptr LidarPipeline::roi_filter(const PointCloud::Ptr scan,
     crop.setMin(min_bounds);
     crop.setMax(max_bounds);
 
-    PointCloud::Ptr filtered = std::make_shared<PointCloud>(); 
+    PointCloud::Ptr filtered = std::make_shared<PointCloud>();
     crop.filter(*filtered);
 
     pcl::CropBox<pcl::PointXYZ> car_crop;
     car_crop.setInputCloud(filtered);
-    car_crop.setMin(car_exclusion_min_);
-    car_crop.setMax(car_exclusion_max_);
+    car_crop.setMin(config_.car_exclusion_min);
+    car_crop.setMax(config_.car_exclusion_max);
     car_crop.setNegative(true);
 
     PointCloud::Ptr car_filtered = std::make_shared<PointCloud>();
@@ -62,45 +63,22 @@ PointCloud::Ptr LidarPipeline::roi_filter(const PointCloud::Ptr scan,
     return car_filtered;
 }
 
-PointCloud::Ptr LidarPipeline::ground_removal(const PointCloud::Ptr scan)
+PointCloud::Ptr LidarPipeline::ground_removal(const PointCloud::ConstPtr& scan,
+                                              pcl::ModelCoefficients& coefficients)
 {
-    auto ground_model_cloud =
-        roi_filter(scan, ground_model_roi_min_, ground_model_roi_max_);
-    auto inliers = std::make_shared<pcl::PointIndices>();
-    auto coefficients = std::make_shared<pcl::ModelCoefficients>();
+    coefficients = calculate_ground_plane(scan);
 
-    pcl::SACSegmentation<pcl::PointXYZ> segmentation;
-
-    segmentation.setOptimizeCoefficients(true);
-    segmentation.setModelType(pcl::SACMODEL_PLANE);
-    segmentation.setMethodType(pcl::SAC_RANSAC);
-    segmentation.setDistanceThreshold(0.1);
-    segmentation.setMaxIterations(300);
-    segmentation.setInputCloud(ground_model_cloud);
-    segmentation.segment(*inliers, *coefficients);
-
-    // The barrier is very visible in some frames, and accounts for a substantial proportion of points. 
-    // Setting an axis the model should remain roughly perpendicular to prevents fitting a ground plane to this
-    segmentation.setAxis(Eigen::Vector3f{0.0f, 0.0f, 1.0f});
-    segmentation.setEpsAngle(0.2617); // 15 degrees in radians
-    
-    auto filtered = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-
-    pcl::ExtractIndices<pcl::PointXYZ> extract;
-    extract.setInputCloud(ground_model_cloud);
-    extract.setIndices(inliers);
-    extract.setNegative(true);
-    extract.filter(*filtered);
+    auto filtered = remove_ground_plane(scan, coefficients);
 
     return filtered;
 }
 
-PointCloud::Ptr LidarPipeline::downsample(const pcl::PointCloud<pcl::PointXYZ>::Ptr scan)
+PointCloud::ConstPtr LidarPipeline::downsample(const PointCloud::ConstPtr& scan)
 {
     return scan;
 }
 
-std::vector<pcl::PointIndices> LidarPipeline::cluster(const PointCloud::Ptr scan)
+std::vector<pcl::PointIndices> LidarPipeline::cluster(const PointCloud::ConstPtr& scan)
 {
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(
         new pcl::search::KdTree<pcl::PointXYZ>
@@ -113,9 +91,9 @@ std::vector<pcl::PointIndices> LidarPipeline::cluster(const PointCloud::Ptr scan
     pcl::EuclideanClusterExtraction<pcl::PointXYZ> ece;
     ece.setInputCloud(scan);
 
-    ece.setClusterTolerance(cluster_tolerance_);
-    ece.setMinClusterSize(min_cluster_size_);
-    ece.setMaxClusterSize(max_cluster_size_);
+    ece.setClusterTolerance(config_.cluster_tolerance);
+    ece.setMinClusterSize(config_.min_cluster_size);
+    ece.setMaxClusterSize(config_.max_cluster_size);
     ece.setSearchMethod(tree);
 
     ece.extract(cluster_indices);
@@ -124,7 +102,7 @@ std::vector<pcl::PointIndices> LidarPipeline::cluster(const PointCloud::Ptr scan
 }
 
 std::vector<ClusterInfo> LidarPipeline::extract_cluster_info(
-    const std::vector<pcl::PointIndices>& clusters, const PointCloud::Ptr scan)
+    const std::vector<pcl::PointIndices>& clusters, const PointCloud::ConstPtr& scan)
 {
     std::vector<ClusterInfo> cluster_info;
     cluster_info.reserve(clusters.size());
@@ -164,20 +142,29 @@ std::vector<ClusterInfo> LidarPipeline::extract_cluster_info(
 std::vector<ClusterInfo> LidarPipeline::filter_clusters(
     const std::vector<ClusterInfo>& cluster_info)
 {
-    std::vector<ClusterInfo> filtered_clusters; 
+    std::vector<ClusterInfo> filtered_clusters;
     for (const auto& cluster : cluster_info)
     {
-        // Checks if 
+        // Checks if
         // a) cluster is within the size an orange cone might be
         // b) the cluster's top point isn't above where a normal orange cone would be
-        if (cluster.dx > orange_cone_dx_ + gate_tolerance_ || cluster.dy > orange_cone_dy_ + gate_tolerance_ || cluster.dz > orange_cone_dz_ + gate_tolerance_ || cluster.max_z > ground_z_ + orange_cone_dz_ + gate_tolerance_)
+        bool too_big = cluster.dx > config_.orange_cone_dx + config_.gate_tolerance ||
+            cluster.dy > config_.orange_cone_dy + config_.gate_tolerance ||
+            cluster.dz > config_.orange_cone_dz + config_.gate_tolerance;
+        bool too_high = cluster.max_z > config_.ground_z + config_.orange_cone_dz + config_.gate_tolerance;
+
+        if (too_big || too_high)
         {
             continue;
         }
 
         // Mark high confidence cones
         auto candidate = cluster;
-        candidate.high_confidence = candidate.point_count > 3 && candidate.max_z > ground_z_ + gate_tolerance_;
+        bool enough_points = candidate.point_count > 3;
+        bool off_ground = candidate.max_z > config_.ground_z + config_.gate_tolerance;
+        bool sufficiently_close = !outside_ground_roi(cluster.position.x(), cluster.position.y()); 
+
+        candidate.high_confidence = enough_points && off_ground && sufficiently_close; 
         filtered_clusters.push_back(candidate);
     }
     return filtered_clusters;
@@ -186,50 +173,86 @@ std::vector<ClusterInfo> LidarPipeline::filter_clusters(
 std::vector<Eigen::Vector2f> LidarPipeline::post_process(
     const std::vector<ClusterInfo>& cluster_info)
 {
-    
+
     return {};
 }
 
-void LidarPipeline::set_detection_roi_bounds(float min_x, float min_y, float min_z, float max_x,
-                                             float max_y, float max_z)
+bool LidarPipeline::outside_ground_roi(const float x, const float y)
 {
-    detection_roi_min_ = Eigen::Vector4f(min_x, min_y, min_z, 1.0f);
-    detection_roi_max_ = Eigen::Vector4f(max_x, max_y, max_z, 1.0f);
+    return x > config_.ground_model_roi_max.x() || y > config_.ground_model_roi_max.y() || x < config_.ground_model_roi_min.x() || y < config_.ground_model_roi_min.y();
 }
 
-void LidarPipeline::set_ground_model_roi_bounds(float min_x, float min_y, float min_z,
-                                                float max_x, float max_y, float max_z)
+pcl::ModelCoefficients LidarPipeline::calculate_ground_plane(const PointCloud::ConstPtr& scan)
 {
-    ground_model_roi_min_ = Eigen::Vector4f(min_x, min_y, min_z, 1.0f);
-    ground_model_roi_max_ = Eigen::Vector4f(max_x, max_y, max_z, 1.0f);
+    auto inliers = std::make_shared<pcl::PointIndices>();
+    auto coefficients= std::make_shared<pcl::ModelCoefficients>();
+    // While we want to look in a very large area for cones, ground points are most prevalent in the surrounding area
+    // Further, large objects like stands, barriers etc make ground removal more complicated
+    // Therefore, we fit the ground plane to a restricted area
+    auto ground_model_cloud =
+        roi_filter(scan, config_.ground_model_roi_min, config_.ground_model_roi_max);
+
+    pcl::SACSegmentation<pcl::PointXYZ> segmentation;
+
+    segmentation.setInputCloud(ground_model_cloud);
+    segmentation.setOptimizeCoefficients(true);
+    segmentation.setModelType(pcl::SACMODEL_PLANE);
+    segmentation.setMethodType(pcl::SAC_RANSAC);
+    segmentation.setDistanceThreshold(config_.ground_distance_threshold);
+    segmentation.setMaxIterations(config_.ground_max_iterations);
+    // The barrier is very visible in some frames, and accounts for a substantial proportion of points.
+    // Setting an axis the model should remain roughly perpendicular to prevents fitting a ground plane to this
+    segmentation.setAxis(Eigen::Vector3f{0.0f, 0.0f, 1.0f});
+    segmentation.setEpsAngle(config_.ground_max_angle_radians);
+
+    segmentation.segment(*inliers, *coefficients);
+    return *coefficients;
 }
 
-void LidarPipeline::set_car_exclusion_bounds(float min_x, float min_y, float min_z, float max_x,
-                                             float max_y, float max_z)
+PointCloud::Ptr LidarPipeline::remove_ground_plane(const PointCloud::ConstPtr scan, const pcl::ModelCoefficients& coefficients)
 {
-    car_exclusion_min_ = Eigen::Vector4f(min_x, min_y, min_z, 1.0f);
-    car_exclusion_max_ = Eigen::Vector4f(max_x, max_y, max_z, 1.0f);
+    float a = coefficients.values[0];
+    float b = coefficients.values[1];
+    float c = coefficients.values[2];
+    float d = coefficients.values[3];
+
+    // the normal may not point upwards
+    if (c < 0.0f)
+    {
+        a = -a;
+        b = -b;
+        c = -c;
+        d = -d;
+    }
+
+    const float normal_norm = std::sqrt(a * a + b * b + c * c);
+
+    auto filtered =
+        std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+
+    filtered->reserve(scan->size());
+
+    for (const auto& point : scan->points)
+    {
+        const float height =
+            (a * point.x + b * point.y + c * point.z + d)
+            / normal_norm;
+
+        bool outside_removal_area = outside_ground_roi(point.x, point.y);
+        bool is_ground = height < config_.ground_removal_threshold;
+
+        if (outside_removal_area || !is_ground)
+        {
+            filtered->push_back(point);
+        }
+    }
+
+    return filtered;
 }
 
-void LidarPipeline::set_cluster_parameters(double cluster_tolerance, int min_cluster_size,
-                                           int max_cluster_size)
+void LidarPipeline::configure(const PipelineConfig& config)
 {
-    cluster_tolerance_ = cluster_tolerance;
-    min_cluster_size_ = min_cluster_size;
-    max_cluster_size_ = max_cluster_size;
-}
-
-void LidarPipeline::set_orange_cone_dimensions(float dx, float dy, float dz)
-{
-    orange_cone_dx_ = dx;
-    orange_cone_dy_ = dy;
-    orange_cone_dz_ = dz;
-}
-
-void LidarPipeline::set_filter_parameters(float ground_z, float gate_tolerance)
-{
-    ground_z_ = ground_z;
-    gate_tolerance_ = gate_tolerance;
+    config_ = config;
 }
 
 }  // namespace lidar_perception

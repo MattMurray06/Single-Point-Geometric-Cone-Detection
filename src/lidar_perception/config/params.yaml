@@ -4,6 +4,7 @@ lidar_node:
     debug: true
     output_roi_topic: debug/lidar/roi_filtered
     output_ground_topic: debug/lidar/ground_filtered
+    output_ground_plane_topic: debug/lidar/ground_plane
     output_downsampled_topic: debug/lidar/downsampled
     output_cluster_topic: debug/lidar/clusters
     output_cluster_info_topic: debug/lidar/cluster_info
@@ -13,13 +14,13 @@ lidar_node:
     detection_roi_max_x: 40.0
     detection_roi_min_y: -40.0
     detection_roi_max_y: 40.0
-    detection_roi_min_z: -0.85
+    detection_roi_min_z: -1.0
     detection_roi_max_z: 2.0
-    ground_model_roi_min_x: 0.0
-    ground_model_roi_max_x: 15.0
-    ground_model_roi_min_y: -15.0
-    ground_model_roi_max_y: 15.0
-    ground_model_roi_min_z: -0.85
+    ground_model_roi_min_x: -10.0
+    ground_model_roi_max_x: 10.0
+    ground_model_roi_min_y: -10.0
+    ground_model_roi_max_y: 10.0
+    ground_model_roi_min_z: -1.0
     ground_model_roi_max_z: 2.0
     car_exclusion_min_x: -1.0
     car_exclusion_max_x: 1.0
@@ -29,9 +30,13 @@ lidar_node:
     car_exclusion_max_z: 2.0
     cluster_tolerance: 0.2
     min_cluster_size: 1
-    max_cluster_size: 300
+    max_cluster_size: 1000
     orange_cone_dx: 0.285
     orange_cone_dy: 0.228
     orange_cone_dz: 0.505
     ground_z: -0.62
+    ground_distance_threshold: 0.02
+    ground_removal_threshold: 0.04
+    ground_max_iterations: 300
+    ground_max_angle_radians: 0.2617993877991494
     gate_tolerance: 0.1

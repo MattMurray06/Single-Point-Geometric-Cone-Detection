@@ -2,7 +2,7 @@
 #include <pcl/PointIndices.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-
+#include <pcl/ModelCoefficients.h>
 #include <Eigen/Core>
 #include <vector>
 
@@ -26,64 +26,68 @@ struct PipelineResult
 {
     PointCloud roi_filtered;
     PointCloud ground_filtered;
+    pcl::ModelCoefficients ground_plane;
     PointCloud downsampled;
     std::vector<pcl::PointIndices> clusters;
     std::vector<ClusterInfo> cluster_info;
 };
 
+struct PipelineConfig
+{
+    Eigen::Vector4f detection_roi_min{0.0f, -40.0f, -0.65f, 1.0f};
+    Eigen::Vector4f detection_roi_max{40.0f, 40.0f, 2.0f, 1.0f};
+    Eigen::Vector4f ground_model_roi_min{0.0f, -15.0f, -0.65f, 1.0f};
+    Eigen::Vector4f ground_model_roi_max{15.0f, 15.0f, 2.0f, 1.0f};
+    Eigen::Vector4f car_exclusion_min{-1.0f, -1.0f, -10.0f, 1.0f};
+    Eigen::Vector4f car_exclusion_max{1.0f, 1.0f, 10.0f, 1.0f};
+    double cluster_tolerance{0.3};
+    int min_cluster_size{1};
+    int max_cluster_size{300};
+    float orange_cone_dx{0.228f};
+    float orange_cone_dy{0.228f};
+    float orange_cone_dz{0.325f};
+    float ground_z{-0.62f};
+    float gate_tolerance{0.1f};
+    double ground_distance_threshold{0.1};
+    double ground_removal_threshold{0.1};
+    int ground_max_iterations{300};
+    double ground_max_angle_radians{0.2617993877991494};
+};
+
 class LidarPipeline
 {
    public:
-    PipelineResult run_pipeline(const PointCloud::Ptr scan);
+    PipelineResult run_pipeline(const PointCloud::ConstPtr& scan);
 
-    void set_detection_roi_bounds(float min_x, float min_y, float min_z, float max_x,
-                                  float max_y, float max_z);
-
-    void set_ground_model_roi_bounds(float min_x, float min_y, float min_z, float max_x,
-                                     float max_y, float max_z);
-
-    void set_car_exclusion_bounds(float min_x, float min_y, float min_z, float max_x,
-                                  float max_y, float max_z);
-
-    void set_cluster_parameters(double cluster_tolerance, int min_cluster_size,
-                                int max_cluster_size);
-
-    void set_orange_cone_dimensions(float dx, float dy, float dz);
-
-    void set_filter_parameters(float ground_z, float gate_tolerance);
+    void configure(const PipelineConfig& config);
 
    private:
-    Eigen::Vector4f detection_roi_min_{0.0f, -40.0f, -0.65f, 1.0f};
-    Eigen::Vector4f detection_roi_max_{40.0f, 40.0f, 2.0f, 1.0f};
-    Eigen::Vector4f ground_model_roi_min_{0.0f, -15.0f, -0.65f, 1.0f};
-    Eigen::Vector4f ground_model_roi_max_{15.0f, 15.0f, 2.0f, 1.0f};
-    Eigen::Vector4f car_exclusion_min_{-1.0f, -1.0f, -10.0f, 1.0f};
-    Eigen::Vector4f car_exclusion_max_{1.0f, 1.0f, 10.0f, 1.0f};
-    double cluster_tolerance_{0.3};
-    int min_cluster_size_{1};
-    int max_cluster_size_{300};
-    float orange_cone_dx_{0.228f};
-    float orange_cone_dy_{0.228f};
-    float orange_cone_dz_{0.325f};
-    float ground_z_{-0.62f};
-    float gate_tolerance_{0.1f};
+    PipelineConfig config_;
 
-    PointCloud::Ptr roi_filter(const PointCloud::Ptr scan, const Eigen::Vector4f& min_bounds,
+    PointCloud::Ptr roi_filter(const PointCloud::ConstPtr& scan, const Eigen::Vector4f& min_bounds,
                                const Eigen::Vector4f& max_bounds);
 
-    PointCloud::Ptr ground_removal(const pcl::PointCloud<pcl::PointXYZ>::Ptr scan);
+    PointCloud::Ptr ground_removal(const PointCloud::ConstPtr& scan,
+                                   pcl::ModelCoefficients& coefficients);
 
-    PointCloud::Ptr downsample(const pcl::PointCloud<pcl::PointXYZ>::Ptr scan);
+    PointCloud::ConstPtr downsample(const PointCloud::ConstPtr& scan);
 
-    std::vector<pcl::PointIndices> cluster(const PointCloud::Ptr scan);
+    std::vector<pcl::PointIndices> cluster(const PointCloud::ConstPtr& scan);
 
     std::vector<ClusterInfo> extract_cluster_info(
-        const std::vector<pcl::PointIndices>& clusters, const PointCloud::Ptr scan);
+        const std::vector<pcl::PointIndices>& clusters, const PointCloud::ConstPtr& scan);
 
     std::vector<ClusterInfo> filter_clusters(
         const std::vector<ClusterInfo>& cluster_info);
 
     std::vector<Eigen::Vector2f> post_process(
         const std::vector<ClusterInfo>& cluster_info);
+
+    bool outside_ground_roi(float x, float y);
+
+    pcl::ModelCoefficients calculate_ground_plane(const PointCloud::ConstPtr& scan);
+
+    PointCloud::Ptr remove_ground_plane(const PointCloud::ConstPtr scan,
+                                        const pcl::ModelCoefficients& coefficients);
 };
 }  // namespace lidar_perception
