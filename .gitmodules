@@ -1,3 +1,6 @@
 [submodule "src/eufs_msgs"]
 	path = src/eufs_msgs
 	url = https://gitlab.com/eufs/public/eufs_msgs.git
+[submodule "src/pypcd"]
+	path = src/pypcd
+	url = git@github.com:MattMurray06/pypcd-custom-kernel.git
