@@ -1,0 +1,4 @@
+geometry_node:
+  ros__parameters:
+    detection_algorithm: "geometry"
+    debug_geometry: true
