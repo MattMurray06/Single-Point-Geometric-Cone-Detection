@@ -57,6 +57,7 @@ class LidarNode : public rclcpp::Node
         this->declare_parameter("cluster_tolerance", 0.3);
         this->declare_parameter("min_cluster_size", 1);
         this->declare_parameter("max_cluster_size", 300);
+        this->declare_parameter("min_point_count_for_confident", 4);
         this->declare_parameter("orange_cone_dx", 0.228);
         this->declare_parameter("orange_cone_dy", 0.228);
         this->declare_parameter("orange_cone_dz", 0.325);
@@ -110,6 +111,8 @@ class LidarNode : public rclcpp::Node
             static_cast<int>(this->get_parameter("min_cluster_size").as_int());
         config.max_cluster_size =
             static_cast<int>(this->get_parameter("max_cluster_size").as_int());
+        config.min_point_count_for_confident = static_cast<int>(
+            this->get_parameter("min_point_count_for_confident").as_int());
         config.orange_cone_dx =
             static_cast<float>(this->get_parameter("orange_cone_dx").as_double());
         config.orange_cone_dy =

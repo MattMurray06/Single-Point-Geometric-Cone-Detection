@@ -43,6 +43,7 @@ struct PipelineConfig
     double cluster_tolerance{0.3};
     int min_cluster_size{1};
     int max_cluster_size{300};
+    int min_point_count_for_confident{4};
     float orange_cone_dx{0.228f};
     float orange_cone_dy{0.228f};
     float orange_cone_dz{0.325f};

@@ -1,5 +1,5 @@
 #!/bin/bash
 rosdep update 
 sudo apt-get update 
-sudo chown $(id -u):$(id -g) build install log
+git submodule update --init --recursive
 rosdep install --from-paths src --ignore-src --rosdistro humble -r -y

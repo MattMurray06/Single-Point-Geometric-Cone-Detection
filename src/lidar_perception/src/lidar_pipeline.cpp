@@ -80,16 +80,29 @@ PointCloud::ConstPtr LidarPipeline::downsample(const PointCloud::ConstPtr& scan)
 
 std::vector<pcl::PointIndices> LidarPipeline::cluster(const PointCloud::ConstPtr& scan)
 {
+    PointCloud::Ptr flattened_cloud(
+        new PointCloud(*scan)
+    );
+
+    // due to lower verticle than horizontal density of lidar points, points are significantly further away in z
+    // as such, clusters often form over levels of z
+    // therefore, I flaten z so that the scaling of each direction is comparable
+    
+    for (auto& point : flattened_cloud->points)
+    {
+        point.z *= 0.2;
+    }
+
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(
         new pcl::search::KdTree<pcl::PointXYZ>
     );
-
-    tree->setInputCloud(scan);
+    
+    tree->setInputCloud(flattened_cloud);
 
     std::vector<pcl::PointIndices> cluster_indices;
 
     pcl::EuclideanClusterExtraction<pcl::PointXYZ> ece;
-    ece.setInputCloud(scan);
+    ece.setInputCloud(flattened_cloud);
 
     ece.setClusterTolerance(config_.cluster_tolerance);
     ece.setMinClusterSize(config_.min_cluster_size);
@@ -160,7 +173,8 @@ std::vector<ClusterInfo> LidarPipeline::filter_clusters(
 
         // Mark high confidence cones
         auto candidate = cluster;
-        bool enough_points = candidate.point_count > 3;
+        bool enough_points =
+            candidate.point_count >= static_cast<std::size_t>(config_.min_point_count_for_confident);
         bool off_ground = candidate.max_z > config_.ground_z + config_.gate_tolerance;
         bool sufficiently_close = !outside_ground_roi(cluster.position.x(), cluster.position.y()); 
 
