@@ -14,6 +14,7 @@ from .cpd import CPD
 from .centreline_voting import CentreLineVoting, CentreLineVotingResult
 from .cone_detector import Cluster, ConeDetector
 from .gaussian_propagation import GaussianPropagation
+from .edge_propagation import EdgePropagation
 from .centreline_propagation import CentreLinePropagation
 
 
@@ -34,6 +35,9 @@ class GeometryNode(Node):
         self.declare_parameter('score_threshold', 6.0)
         self.declare_parameter('max_neighbour_radius', 6.0)
         self.declare_parameter('min_neighbour_radius', 1.0)
+        self.declare_parameter('edge_max_neighbour_radius', 6.0)
+        self.declare_parameter('edge_min_neighbour_radius', 1.0)
+        self.declare_parameter('max_angle_change', 30.0)
         self.declare_parameter('beam_search_angle_deg', 30.0)
         self.declare_parameter('plot_growth', False)
 
@@ -55,6 +59,15 @@ class GeometryNode(Node):
         self.min_neighbour_radius = self.get_parameter(
             'min_neighbour_radius'
         ).value
+        self.edge_max_neighbour_radius = self.get_parameter(
+            'edge_max_neighbour_radius'
+        ).value
+        self.edge_min_neighbour_radius = self.get_parameter(
+            'edge_min_neighbour_radius'
+        ).value
+        self.max_angle_change = self.get_parameter(
+            'max_angle_change'
+        ).value
         self.beam_search_angle_deg = self.get_parameter(
             'beam_search_angle_deg'
         ).value
@@ -70,6 +83,9 @@ class GeometryNode(Node):
             self.score_threshold,
             self.max_neighbour_radius,
             self.min_neighbour_radius,
+            self.edge_max_neighbour_radius,
+            self.edge_min_neighbour_radius,
+            self.max_angle_change,
             self.beam_search_angle_deg,
             self.plot_growth,
         )
@@ -110,6 +126,9 @@ class GeometryNode(Node):
         score_threshold: float,
         max_neighbour_radius: float,
         min_neighbour_radius: float,
+        edge_max_neighbour_radius: float,
+        edge_min_neighbour_radius: float,
+        max_angle_change: float,
         beam_search_angle_deg: float,
         plot_growth: bool,
     ) -> ConeDetector:
@@ -118,6 +137,7 @@ class GeometryNode(Node):
             'voting': CentreLineVoting,
             'centreline propagation': CentreLinePropagation,
             'gaussian propagation': GaussianPropagation,
+            'edge propagation': EdgePropagation,
         }
 
         algorithm_class = algorithms.get(algorithm)
@@ -134,6 +154,13 @@ class GeometryNode(Node):
                 max_neighbour_radius=max_neighbour_radius,
                 min_neighbour_radius=min_neighbour_radius,
                 beam_search_angle_deg=beam_search_angle_deg,
+                plot_growth=plot_growth,
+            )
+        if algorithm == 'edge propagation':
+            return EdgePropagation(
+                max_neighbour_radius=edge_max_neighbour_radius,
+                min_neighbour_radius=edge_min_neighbour_radius,
+                max_angle_change=max_angle_change,
                 plot_growth=plot_growth,
             )
         if algorithm == 'voting':
