@@ -16,7 +16,16 @@
 
     "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
 
+    "containerEnv": {
+        "DISPLAY": "${localEnv:DISPLAY}",
+        "WAYLAND_DISPLAY": "${localEnv:WAYLAND_DISPLAY}",
+        "XDG_RUNTIME_DIR": "/mnt/wslg/runtime-dir",
+        "PULSE_SERVER": "/mnt/wslg/PulseServer"
+    },
+
     "mounts": [
+        "source=/mnt/wslg,target=/mnt/wslg,type=bind",
+        "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
         "source=${localWorkspaceFolder}/../Data,target=${containerWorkspaceFolder}/data,type=bind",
         "source=${localEnv:HOME}/.ssh,target=/home/${localEnv:USER}/.ssh,type=bind,consistency=cached"
     ],

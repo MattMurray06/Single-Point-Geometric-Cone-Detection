@@ -10,6 +10,8 @@
 #include <eufs_msgs/msg/detail/cone_with_covariance__struct.hpp>
 #include <limits>
 #include <memory>
+#include <perception_msgs/msg/cone_array_with_confidence.hpp>
+#include <perception_msgs/msg/cone_with_confidence.hpp>
 #include <rclcpp/logging.hpp>
 #include <sensor_msgs/msg/detail/point_cloud2__struct.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -156,13 +158,13 @@ class LidarNode : public rclcpp::Node
         }
         cluster_info_publisher_ = this->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
             output_cluster_info_topic_, rclcpp::QoS(1));
-        cone_publisher_ = this->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
+        cone_publisher_ = this->create_publisher<perception_msgs::msg::ConeArrayWithConfidence>(
             output_cone_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
     }
 
    private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
-    rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cone_publisher_;
+    rclcpp::Publisher<perception_msgs::msg::ConeArrayWithConfidence>::SharedPtr cone_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr roi_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr ground_publisher_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr ground_plane_publisher_;
@@ -188,8 +190,8 @@ class LidarNode : public rclcpp::Node
 
     void remove_zero_points(const PointCloud::Ptr& cloud);
 
-    eufs_msgs::msg::ConeArrayWithCovariance to_cone_array_msg(
-        const std::vector<Eigen::Vector2f>& cones, const std_msgs::msg::Header& header);
+    perception_msgs::msg::ConeArrayWithConfidence to_cone_array_msg(
+        const std::vector<ClusterInfo>& clusters, const std_msgs::msg::Header& header);
 
     visualization_msgs::msg::MarkerArray to_cluster_markers(
         const std::vector<pcl::PointIndices>& clusters, const PointCloud& point_cloud,
@@ -237,9 +239,7 @@ void LidarNode::lidar_callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg
     }
     cluster_info_publisher_->publish(cluster_info_to_ros_msg(result.cluster_info, msg->header));
 
-    // auto cone_msg = to_cone_array_msg(cones, msg->header);
-
-    // cone_publisher_->publish(cone_msg);
+    cone_publisher_->publish(to_cone_array_msg(result.cluster_info, msg->header));
 }
 
 void LidarNode::remove_zero_points(const PointCloud::Ptr& cloud)
@@ -259,24 +259,21 @@ void LidarNode::remove_zero_points(const PointCloud::Ptr& cloud)
     RCLCPP_DEBUG(this->get_logger(), "Removed %zu zero points", original_size - cloud->size());
 }
 
-eufs_msgs::msg::ConeArrayWithCovariance LidarNode::to_cone_array_msg(
-    const std::vector<Eigen::Vector2f>& cones, const std_msgs::msg::Header& header)
+perception_msgs::msg::ConeArrayWithConfidence LidarNode::to_cone_array_msg(
+    const std::vector<ClusterInfo>& clusters, const std_msgs::msg::Header& header)
 {
-    eufs_msgs::msg::ConeArrayWithCovariance msg;
-
+    perception_msgs::msg::ConeArrayWithConfidence msg;
     msg.header = header;
+    msg.cones.reserve(clusters.size());
 
-    for (const auto& cone : cones)
+    for (const auto& cluster : clusters)
     {
-        eufs_msgs::msg::ConeWithCovariance cone_msg;
-
-        cone_msg.point.x = cone.x();
-        cone_msg.point.y = cone.y();
-        cone_msg.point.z = 0.0;
-
-        cone_msg.covariance = {0.0, 0.0, 0.0, 0.0};
-
-        msg.unknown_color_cones.push_back(cone_msg);
+        perception_msgs::msg::ConeWithConfidence cone_msg;
+        cone_msg.point.x = cluster.position.x();
+        cone_msg.point.y = cluster.position.y();
+        cone_msg.point.z = cluster.position.z();
+        cone_msg.confident = cluster.high_confidence;
+        msg.cones.push_back(cone_msg);
     }
 
     return msg;

@@ -1,4 +1,4 @@
-from .cone_detector import ConeDetector
+from .cone_detector import ConeDetector, Cluster
 from scipy.spatial import cKDTree 
 import numpy as np
 from dataclasses import dataclass
@@ -16,8 +16,11 @@ class CentreLineVotingResult:
 
 
 class CentreLineVoting(ConeDetector):
-    def detect_cones(self, cluster_centres: np.ndarray) -> CentreLineVotingResult:
-        hypotheses = self.create_all_hypothesis(cluster_centres)
+    def __init__(self, track_width: float = 4.0):
+        self.track_width = track_width
+
+    def detect_cones(self, cluster_centres: list[Cluster]) -> CentreLineVotingResult:
+        hypotheses = self.create_all_hypothesis(np.stack([c.position for c in cluster_centres]))
         return CentreLineVotingResult(
             cones=np.empty((0, 2), dtype=float),
             centre_lines=hypotheses,
@@ -27,12 +30,12 @@ class CentreLineVoting(ConeDetector):
         hypotheses: list[CentreLine] = []
         tree = cKDTree(cluster_centres)
         for i, cluster in enumerate(cluster_centres):
-            neighbours = tree.query_ball_point(cluster, r=5.0)
+            neighbours = tree.query_ball_point(cluster, r=5.0, p=2)
             for neighbour in neighbours:
                 if neighbour == i:
                     continue
                 h1, h2, h3 = self.generate_centreline_hypotheses(
-                    cluster_centres[neighbour], cluster, 4
+                    cluster_centres[neighbour], cluster, self.track_width
                 )
                 hypotheses.append(h1)
                 hypotheses.append(h2)

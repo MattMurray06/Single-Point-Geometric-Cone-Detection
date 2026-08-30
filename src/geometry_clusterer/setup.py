@@ -15,7 +15,7 @@ setup(
         (os.path.join('share', package_name, 'config'), ['config/params.yaml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
-    install_requires=['setuptools', 'scipy'],
+    install_requires=['setuptools'],
     zip_safe=True,
     maintainer='gj64',
     maintainer_email='mathewmurray2005@outlook.com',

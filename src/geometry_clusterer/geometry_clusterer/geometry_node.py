@@ -1,13 +1,20 @@
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Point
-from eufs_msgs.msg import ConeArrayWithCovariance
+from perception_msgs.msg import ConeArrayWithConfidence
 from rclpy.node import Node
-from rclpy.qos import QoSProfile
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+)
 from visualization_msgs.msg import Marker, MarkerArray
 
 from .cpd import CPD
 from .centreline_voting import CentreLineVoting, CentreLineVotingResult
+from .cone_detector import Cluster, ConeDetector
+from .gaussian_propagation import GaussianPropagation
+from .centreline_propagation import CentreLinePropagation
 
 
 class GeometryNode(Node):
@@ -18,27 +25,58 @@ class GeometryNode(Node):
         self.get_logger().info('geometry node started')
 
         self.declare_parameter('detection_algorithm', 'cpd')
-        algorithm = self.get_parameter('detection_algorithm').get_parameter_value().string_value.lower()
-        self.declare_parameter('debug_geometry', False)
-        debug_geometry = self.get_parameter('debug_geometry').value
-        algorithms = {
-            'cpd': CPD,
-            'geometry': CentreLineVoting,
-        }
-        if algorithm not in algorithms:
-            valid_algorithms = ', '.join(sorted(algorithms))
-            raise ValueError(
-                f'Unsupported detection_algorithm "{algorithm}". '
-                f'Expected one of: {valid_algorithms}'
-            )
-        self.detection_alg = algorithms[algorithm]()
-        self.get_logger().info(f'Using {algorithm} detection algorithm')
+        self.declare_parameter('debug', False)
+        self.declare_parameter('propagation_distance', 3.0)
+        self.declare_parameter('track_width', 4.0)
+        self.declare_parameter('sigma_longitudinal', 2.0)
+        self.declare_parameter('sigma_lateral', 0.3)
+        self.declare_parameter('max_mahalanobis_distance', 2.0)
+        self.declare_parameter('score_threshold', 6.0)
+        self.declare_parameter('max_neighbour_radius', 6.0)
+        self.declare_parameter('min_neighbour_radius', 1.0)
+        self.declare_parameter('beam_search_angle_deg', 30.0)
+        self.declare_parameter('plot_growth', False)
 
-        self.debug_geometry = debug_geometry and algorithm == 'geometry'
+        self.algorithm = self.get_parameter('detection_algorithm').get_parameter_value().string_value.lower()
+        self.debug = self.get_parameter('debug').value
+        self.propagation_distance = self.get_parameter(
+            'propagation_distance'
+        ).value
+        self.track_width = self.get_parameter('track_width').value
+        self.sigma_longitudinal = self.get_parameter('sigma_longitudinal').value
+        self.sigma_lateral = self.get_parameter('sigma_lateral').value
+        self.max_mahalanobis_distance = self.get_parameter(
+            'max_mahalanobis_distance'
+        ).value
+        self.score_threshold = self.get_parameter('score_threshold').value
+        self.max_neighbour_radius = self.get_parameter(
+            'max_neighbour_radius'
+        ).value
+        self.min_neighbour_radius = self.get_parameter(
+            'min_neighbour_radius'
+        ).value
+        self.beam_search_angle_deg = self.get_parameter(
+            'beam_search_angle_deg'
+        ).value
+        self.plot_growth = self.get_parameter('plot_growth').value
+
+        self.detection_alg = self.create_detection_algorithm(
+            self.algorithm,
+            self.propagation_distance,
+            self.track_width,
+            self.sigma_longitudinal,
+            self.sigma_lateral,
+            self.max_mahalanobis_distance,
+            self.score_threshold,
+            self.max_neighbour_radius,
+            self.min_neighbour_radius,
+            self.beam_search_angle_deg,
+            self.plot_growth,
+        )
 
         self.cluster_info_sub_ = self.create_subscription(
-            ConeArrayWithCovariance,
-            "/debug/lidar/cluster_info",
+            ConeArrayWithConfidence,
+            "/cones",
             self.cluster_callback,
             QoSProfile(depth = 1)
         )
@@ -50,37 +88,116 @@ class GeometryNode(Node):
         )
 
         self.centreline_pub_ = None
-        if self.debug_geometry:
+        if self.debug: 
             self.centreline_pub_ = self.create_publisher(
                 MarkerArray,
                 "/lidar/debug/centrelines",
-                QoSProfile(depth=1)
+                QoSProfile(
+                    depth=1,
+                    reliability=ReliabilityPolicy.RELIABLE,
+                    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                )
             )
+
+    def create_detection_algorithm(
+        self,
+        algorithm: str,
+        propagation_distance: float,
+        track_width: float,
+        sigma_longitudinal: float,
+        sigma_lateral: float,
+        max_mahalanobis_distance: float,
+        score_threshold: float,
+        max_neighbour_radius: float,
+        min_neighbour_radius: float,
+        beam_search_angle_deg: float,
+        plot_growth: bool,
+    ) -> ConeDetector:
+        algorithms: dict[str, type[ConeDetector]] = {
+            'cpd': CPD,
+            'voting': CentreLineVoting,
+            'centreline propagation': CentreLinePropagation,
+            'gaussian propagation': GaussianPropagation,
+        }
+
+        algorithm_class = algorithms.get(algorithm)
+        if algorithm_class is None:
+            valid_algorithms = ', '.join(sorted(algorithms))
+            raise ValueError(
+                f'Unsupported detection_algorithm "{algorithm}". '
+                f'Expected one of: {valid_algorithms}'
+            )
+
+        self.get_logger().info(f'Using {algorithm} detection algorithm')
+        if algorithm == 'gaussian propagation':
+            return GaussianPropagation(
+                max_neighbour_radius=max_neighbour_radius,
+                min_neighbour_radius=min_neighbour_radius,
+                beam_search_angle_deg=beam_search_angle_deg,
+                plot_growth=plot_growth,
+            )
+        if algorithm == 'voting':
+            return CentreLineVoting(track_width=track_width)
+        if algorithm == 'centreline propagation':
+            return CentreLinePropagation(
+                propagation_distance=propagation_distance,
+                track_width=track_width,
+                sigma_longitudinal=sigma_longitudinal,
+                sigma_lateral=sigma_lateral,
+                max_mahalanobis_distance=max_mahalanobis_distance,
+                score_threshold=score_threshold,
+            )
+        return algorithm_class()
 
     def cluster_callback(self, clusters_msg):
         cluster_centres = self.ros_msg_to_array(clusters_msg)
 
-        detection_result = self.detection_alg.detect_cones(cluster_centres)
-        if isinstance(detection_result, CentreLineVotingResult):
-            cones = detection_result.cones
-            if self.debug_geometry:
+        if isinstance(self.detection_alg, CentreLineVoting):
+            detection_result = self.detection_alg.detect_cones(cluster_centres)
+            if self.centreline_pub_ is not None:
                 centreline_msg = self.centrelines_to_ros_msg(
                     detection_result.centre_lines, clusters_msg.header
                 )
+
                 self.centreline_pub_.publish(centreline_msg)
+
+        elif isinstance(self.detection_alg, CentreLinePropagation):
+            detection_result = self.detection_alg.detect_cones(cluster_centres)
+
+            hypotheses = (
+                detection_result
+                if isinstance(detection_result, list)
+                else [detection_result]
+            )
+
+            centrelines = [
+                centreline
+                for hypothesis in hypotheses
+                for centreline in hypothesis.centrelines
+            ]
+
+            if self.centreline_pub_ is not None:
+                centreline_msg = self.centrelines_to_ros_msg(
+                    centrelines, clusters_msg.header
+                )
+                self.centreline_pub_.publish(centreline_msg)
+
         else:
+            detection_result = self.detection_alg.detect_cones(cluster_centres)
             cones = detection_result
 
         # cone_msg = self.array_to_ros_msg(cones, clusters_msg.header)
 
         # self.cone_pub_.publish(cone_msg)
 
-    def ros_msg_to_array(self, msg: ConeArrayWithCovariance) -> np.ndarray:
-        clusters = np.empty((len(msg.unknown_color_cones), 2))
-        for i in range(len(msg.unknown_color_cones)):
-            clusters[i, 0] = msg.unknown_color_cones[i].point.x
-            clusters[i, 1] = msg.unknown_color_cones[i].point.y
-        return clusters
+    def ros_msg_to_array(self, msg: ConeArrayWithConfidence) -> list[Cluster]:
+        return [
+            Cluster(
+                position=np.array([cone.point.x, cone.point.y]),
+                confident=cone.confident,
+            )
+            for cone in msg.cones
+        ]
 
     def array_to_ros_msg(self, cones: np.ndarray, header) -> MarkerArray:
         cones = np.asarray(cones)

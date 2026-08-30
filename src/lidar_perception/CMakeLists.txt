@@ -16,6 +16,7 @@ find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(eufs_msgs REQUIRED)
+find_package(perception_msgs REQUIRED)
 
 # LiDAR processing library
 add_library(lidar_pipeline
@@ -46,6 +47,7 @@ ament_target_dependencies(lidar_node
   visualization_msgs
   pcl_conversions
   eufs_msgs
+  perception_msgs
 )
 
 target_link_libraries(lidar_node
