@@ -10,8 +10,10 @@ geometry_node:
     score_threshold: 0.6
     max_neighbour_radius: 3.0
     min_neighbour_radius: 0.5
-    edge_max_neighbour_radius: 3.6
-    edge_min_neighbour_radius: 1.0
+    edge_max_neighbour_radius: 4.5
+    edge_min_neighbour_radius: 0.2
     max_angle_change: 25.0
+    wall_density_threshold: 1.5
+    max_consecutive_angle_change: 15.0
     beam_search_angle_deg: 30.0
     plot_growth: False
