@@ -12,8 +12,8 @@ geometry_node:
     min_neighbour_radius: 0.5
     edge_max_neighbour_radius: 4.5
     edge_min_neighbour_radius: 0.2
-    max_angle_change: 25.0
+    max_angle_change: 30.0
     wall_density_threshold: 1.5
-    max_consecutive_angle_change: 15.0
+    max_consecutive_angle_change: 25.0
     beam_search_angle_deg: 30.0
     plot_growth: False
