@@ -2,6 +2,8 @@ from .cone_detector import Cluster, ConeDetector
 import numpy as np
 from scipy.spatial import cKDTree
 from dataclasses import dataclass
+from scipy.optimize import least_squares
+from collections import deque
 
 @dataclass
 class FrameState:
@@ -48,7 +50,7 @@ class EdgePropagation(ConeDetector):
         max_neighbour_radius: float,
         min_neighbour_radius: float,
         max_angle_change: float = 30.0,
-        wall_density_threshold: float = 1.8,
+        wall_density_threshold: float = 1.0,
         max_consecutive_angle_change: float = 20.0,
         plot_growth: bool = False,
     ):
@@ -60,20 +62,49 @@ class EdgePropagation(ConeDetector):
         self.plot_growth = plot_growth
 
     def detect_cones(self, cluster_centres: list[Cluster]) -> object:
+        """
+        From clusters (clusters may be cones OR noise), determine the set of cones within this. Hence, determining map of the track
+        Steps:
+        - Look for edges
+        - These edges come in families. A family of edges are numerous different sets of clusters that could describe one true track boundary
+        - Find track segments
+            - These are found by finding pairs of edge families that are reasonably close and reasonably parallel 
+        - Return cones that lie within these track segments (not implemented yet, but trivial)
+        """
         if not cluster_centres:
             return []
+        
         cluster_xy = np.array([c.position for c in cluster_centres])
+
         tree = cKDTree(cluster_xy)
         state = FrameState(cluster_xy, tree)
 
+        edge_families: list[EdgeFamily] = self.find_edge_families(state)
+
+        best_edges: list[Edge] = self.extract_best_edges(edge_families, state)
+
+        # Determine pairs of edges that form track segments
+        track_segments: list[tuple[EdgeFamily, EdgeFamily]] = self.retrieve_track_segments(edge_families, state)
+
+        # This will be a subset of edge_families - only the ones that form part of the track
+        track_edge_families: list[EdgeFamily] = list({
+            family.family_id: family
+            for track_segment in track_segments
+            for family in track_segment
+        }.values())
+
+        self.plot_edges(state, edge_families, 0)
+        self.plot_edges(state, track_edge_families, 0)
+
+    def find_edge_families(self, state: FrameState) -> list[EdgeFamily]:
         visited_idxs: set[int] = set()
         edge_families: list[EdgeFamily] = []
-        family = 0
+        family_idx = 0
         for i in range(len(state.clusters)):
             if i in visited_idxs:
                 continue
 
-            edge_family, newly_visited = self.detect_edges(i, state, family)
+            edge_family, newly_visited = self.find_edges_from_cluster(i, state, family_idx)
             visited_idxs.update(newly_visited)
 
             # Many edges are dense, wall families. these should be removed
@@ -82,19 +113,13 @@ class EdgePropagation(ConeDetector):
 
             if edge_family.edges:
                 edge_families.append(edge_family)
-                family += 1
-                # print(f"Length of edge family {family}: {len(edge_family.edges)}")
+                family_idx += 1
 
-        track_segments = self.retrieve_track_segments(edge_families, state)
+        return edge_families
 
-        track_edge_families = list({
-            family.family_id: family
-            for track_segment in track_segments
-            for family in track_segment
-        }.values())
-
-        self.plot_edges(state, edge_families, 0)
-        self.plot_edges(state, track_edge_families, 0)
+    def extract_best_edges(self, edge_families: list[EdgeFamily], state: FrameState) -> list[Edge]:
+        
+        return NotImplementedError
 
     def retrieve_track_segments(self, edge_families: list[EdgeFamily], state: FrameState) -> list[tuple[EdgeFamily, EdgeFamily]]:
         track_segments: list[tuple[EdgeFamily, EdgeFamily]] = []
@@ -168,7 +193,6 @@ class EdgePropagation(ConeDetector):
         too_close = np.any(d2 < self.min_neighbour_radius**2)
         return too_close
 
-
     def test_edge_pair_parallelity(self, edge_1: Edge, edge_2: Edge, state: FrameState):
         parallel_pair: bool = False
 
@@ -215,7 +239,7 @@ class EdgePropagation(ConeDetector):
 
         return best_idx
 
-    def detect_edges(self, start_idx: int, state: FrameState, family: int) -> tuple[EdgeFamily, set[int]]:
+    def find_edges_from_cluster(self, start_idx: int, state: FrameState, family: int) -> tuple[EdgeFamily, set[int]]:
         edge_family = EdgeFamily([Edge([start_idx])], family, start_idx, 1)
         generation = 0
 
@@ -226,47 +250,50 @@ class EdgePropagation(ConeDetector):
             if edge_family.stopped_growing:
                 break
         
-        # edge_family.edges = [edge for edge in edge_family.edges if edge.length > 2]
-
         visited_idxs: set[int] = set(idx for edge in edge_family.edges for idx in edge.idxs)
 
         return (edge_family, visited_idxs)
 
     def grow_edges(self, edge_family: EdgeFamily, state: FrameState) -> EdgeFamily:
+        """
+        Based on a current set of edges, grow each of these by 1 cluster, if they can be
+        Further, remove 'stumps'. These are edges that are significantly shorter than the 'best' (longest) edges
+        """
         grown_edge_family: EdgeFamily = EdgeFamily(
             [],
             edge_family.family_id,
             edge_family.starting_idx,
             edge_family.max_length,
         )
-        has_grown: bool = False
+        family_has_grown: bool = False
         for e in edge_family.edges:
             if e.stopped_growing == True:
                 if self.check_for_stump(e, edge_family) == False:
                     grown_edge_family.edges.append(e)
-                # else:
-                #     print(f"Family {edge_family.family_id} removed stump of length {e.length}")
                 continue
 
-            child_hypotheses = self.propose_extensions(e, state)
-            if len(child_hypotheses) == 0:
+            child_edge_hypotheses = self.propose_extensions(e, state)
+
+            if len(child_edge_hypotheses) == 0:
                 e.stopped_growing = True
                 grown_edge_family.edges.append(e)
             else:
-                grown_edge_family.edges.extend(child_hypotheses)
-                has_grown = True
+                grown_edge_family.edges.extend(child_edge_hypotheses)
+                family_has_grown = True
 
-        if has_grown: 
+        if family_has_grown: 
             grown_edge_family.max_length += 1
         
         return grown_edge_family
 
     def check_for_stump(self, edge: Edge, family: EdgeFamily):
+        # If an edge is long, but still significantly shorter than the longest edge, then it's very likely a stump. Most often (annecdotally), it's jumped to the other side of the track, maybe with the help of an outlier. 
+        stump_big: bool = edge.length > 3 and edge.length < family.max_length - 3
         # If an edge is short, yet other edges in the family are long, it has very likely reached an outlier or started in the wrong direction
         stump_3: bool = edge.length == 3 and family.max_length > 5
         # length 2 stumps are special - they form very easily initially (every direction is equally valid). As soon as a hypothesis grows finds a direction to start growing in, size 2 stumps should be removed
         stump_2: bool = edge.length == 2 and family.max_length > 2
-        if stump_2 or stump_3:
+        if stump_2 or stump_3 or stump_big:
             return True
         return False
 
@@ -290,20 +317,33 @@ class EdgePropagation(ConeDetector):
         )
 
     def is_likely_wall_family(self, edge_family: EdgeFamily, state: FrameState) -> bool:
+        def point_distance(edge: Edge, i1: int, i2: int):
+            return np.linalg.norm(state.clusters[i1] - state.clusters[i2])
+
         edge_densities: list[float] = []
-        for e in edge_family.edges:
-            if e.length < 5:
-                continue
+        min_size = 5
 
-            prev_idx = e.idxs[0]
-            total_dist = 0
-            for idx in e.idxs[1:]:
-                total_dist += np.linalg.norm(state.clusters[idx] - state.clusters[prev_idx])
-            edge_densities.append(total_dist / e.length)
+        # Even for a human, it's hard to make inferences about short edges - could be a hairpin, oould be starting orange cones, or could be wall
+        if edge_family.max_length < min_size:
+            return False
 
-        # if 5 or more clusters are very close together, then this will not be a track family
-        if edge_densities and min(edge_densities) < self.wall_density_threshold:
-            return True
+        # We only check the maximal length families for efficiency - further, these will almost certainly include almost every wall cluster (edges are straight lines and there is no 'min distance' check - the max edge will just jump between every cluster)
+        # In most cases, there will only be one maximal length family
+        max_families = [e for e in edge_family.edges if e.length == edge_family.max_length]
+
+        for edge in max_families:
+            # We have sliding window of pair distances - if any set of 5 clusters are too close together, then that is sufficient evidence to assume wall
+            # Definition of 'Too close together': in an ordered list of 5 edges, the average distance between a pair is less than a specified threshold (i.e. 1 meter)
+            window_dists = deque([point_distance(edge, edge.idxs[i], edge.idxs[i-1]) for i in range(1, min_size)])
+            prev_idx = edge.idxs[min_size-1]
+            for idx in edge.idxs[min_size:]:
+                window_dists.popleft()
+                window_dists.append(point_distance(edge, idx, prev_idx))
+                prev_idx = idx
+                avg_dist: float = sum(window_dists)/min_size
+
+                if avg_dist < self.wall_density_threshold:
+                    return True
         return False
         
     def propose_extensions(self, edge: Edge, state: FrameState) -> list[Edge]:
@@ -314,14 +354,22 @@ class EdgePropagation(ConeDetector):
         else:
             start_candidate_idxs = self.nearby_candidates(state.clusters[edge.idxs[0]], edge, state)
             end_candidate_idxs = self.nearby_candidates(state.clusters[edge.idxs[-1]], edge, state)
-            start_candidate_idxs = self.prune_invalid_angles(start_candidate_idxs, edge, False, state)
-            end_candidate_idxs = self.prune_invalid_angles(end_candidate_idxs, edge, True, state)
+
+            start_candidate_idxs = self.select_valid_candidates(start_candidate_idxs, edge, False, state)
+            end_candidate_idxs = self.select_valid_candidates(end_candidate_idxs, edge, True, state)
+
             child_edges.extend(self.append_candidates_to_edge(start_candidate_idxs, edge, False))
             child_edges.extend(self.append_candidates_to_edge(end_candidate_idxs, edge, True))
         return child_edges
 
-    def prune_invalid_angles(self, test_idxs: list[int], edge: Edge, end: bool, state: FrameState):
+    def select_valid_candidates(self, test_idxs: list[int], edge: Edge, end: bool, state: FrameState) -> list[int]:
+        """
+        Given an edge and a bunch of proposed extensions (i.e. adding a cluster to the end of the edge), test whether those extensions make sense geometrically. 
+        To do this, we check whether each extension creates a sensible continution of the track, based on the change of angle it makes with previous segments.
+        """
         if edge.length <= 1:
+            # # Angle arbritarily set to 0 for the case of only 1 element
+            # return {idx : 0 for idx in test_idxs}
             return test_idxs
 
         valid_idxs: list[int] = []
@@ -333,7 +381,9 @@ class EdgePropagation(ConeDetector):
                 state.clusters[edge.idxs[-end]],
                 state.clusters[edge.idxs[-3 * end + 1]],
             )
-            if final_angle > np.deg2rad(180 - self.max_angle_change):
+
+            angle_delta = np.deg2rad(180 - final_angle)
+            if self.max_angle_change > angle_delta:
                 if edge.length == 2:
                     valid_idxs.append(idx)
                 else:
@@ -370,6 +420,26 @@ class EdgePropagation(ConeDetector):
         dot = np.clip(dot, -1.0, 1.0)
 
         return np.arccos(dot)
+
+    def fit_curve(self, edge: Edge, state: FrameState):
+        x = state.clusters[edge.idxs][0]
+        y = state.clusters[edge.idxs][1]
+
+        assert len(x) > 2
+        deg = len(x) - 2
+
+        def residuals(coeffs):
+            return np.polyval(coeffs, x) - y
+
+        initial = np.polyfit(x, y, deg=deg)
+
+        result = least_squares(
+            residuals,
+            initial,
+            loss="soft_l1",
+            f_scale=0.15
+        )
+        return result.x
 
     def append_candidates_to_edge(self, candidate_idxs: list[int], edge: Edge, end: bool):
         child_edges: list[Edge] = []
@@ -474,8 +544,3 @@ class EdgePropagation(ConeDetector):
             if np.linalg.norm(state.clusters[idx] - centre_point) > self.min_neighbour_radius and not idx_already_in_hypothesis:
                 valid_idxs.append(idx)
         return valid_idxs
-
-
-
-
-
