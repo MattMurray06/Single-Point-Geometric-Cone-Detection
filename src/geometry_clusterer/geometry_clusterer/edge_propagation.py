@@ -81,7 +81,7 @@ class EdgePropagation(ConeDetector):
 
         edge_families: list[EdgeFamily] = self.find_edge_families(state)
 
-        best_edges: list[Edge] = self.extract_best_edges(edge_families, state)
+        # best_edges: list[Edge] = self.extract_best_edges(edge_families, state)
 
         # Determine pairs of edges that form track segments
         track_segments: list[tuple[EdgeFamily, EdgeFamily]] = self.retrieve_track_segments(edge_families, state)
@@ -117,9 +117,13 @@ class EdgePropagation(ConeDetector):
 
         return edge_families
 
-    def extract_best_edges(self, edge_families: list[EdgeFamily], state: FrameState) -> list[Edge]:
+    # def extract_best_edges(self, edge_families: list[EdgeFamily], state: FrameState) -> list[Edge]:
+    #     for familiy in edge_families:
+    #         for edge in familiy:
+    #             self.score(edge)
+            
         
-        return NotImplementedError
+    #     return NotImplementedError
 
     def retrieve_track_segments(self, edge_families: list[EdgeFamily], state: FrameState) -> list[tuple[EdgeFamily, EdgeFamily]]:
         track_segments: list[tuple[EdgeFamily, EdgeFamily]] = []
@@ -320,7 +324,6 @@ class EdgePropagation(ConeDetector):
         def point_distance(edge: Edge, i1: int, i2: int):
             return np.linalg.norm(state.clusters[i1] - state.clusters[i2])
 
-        edge_densities: list[float] = []
         min_size = 5
 
         # Even for a human, it's hard to make inferences about short edges - could be a hairpin, oould be starting orange cones, or could be wall
@@ -362,64 +365,65 @@ class EdgePropagation(ConeDetector):
             child_edges.extend(self.append_candidates_to_edge(end_candidate_idxs, edge, True))
         return child_edges
 
-    def select_valid_candidates(self, test_idxs: list[int], edge: Edge, end: bool, state: FrameState) -> list[int]:
+    def select_valid_candidates(self, test_idxs: list[int], edge: Edge, extend_at_end: bool, state: FrameState) -> list[int]:
         """
         Given an edge and a bunch of proposed extensions (i.e. adding a cluster to the end of the edge), test whether those extensions make sense geometrically. 
         To do this, we check whether each extension creates a sensible continution of the track, based on the change of angle it makes with previous segments.
         """
         if edge.length <= 1:
-            # # Angle arbritarily set to 0 for the case of only 1 element
-            # return {idx : 0 for idx in test_idxs}
             return test_idxs
 
-        valid_idxs: list[int] = []
-        for idx in test_idxs:
-            # checks that angle is reasonable for track segment
-            # end == 1 => we want indices -1 and -2, end == 0 => we want indices 0 and 1 - these formulas generate that
-            final_angle = self.angle_between_points(
-                state.clusters[idx],
-                state.clusters[edge.idxs[-end]],
-                state.clusters[edge.idxs[-3 * end + 1]],
-            )
+        max_consecutive_angle_change_rad = np.deg2rad(self.max_consecutive_angle_change)
+        max_angle_change_rad = np.deg2rad(self.max_angle_change + 10)
+        first, second, third = 0, 1, 2
+        if extend_at_end:
+            first, second, third = -1, -2, -3
 
-            angle_delta = np.deg2rad(180 - final_angle)
-            if self.max_angle_change > angle_delta:
-                if edge.length == 2:
-                    valid_idxs.append(idx)
-                else:
-                    second_to_final_angle = self.angle_between_points(
-                        state.clusters[edge.idxs[-end]],
-                        state.clusters[edge.idxs[-3 * end + 1]],
-                        state.clusters[edge.idxs[-5 * end + 2]]
-                    )
-                    # Checks that the change in angle isn't unnaturally big
-                    if abs(second_to_final_angle - final_angle) < np.deg2rad(
-                        self.max_consecutive_angle_change
-                    ):
-                        valid_idxs.append(idx)
+
+        valid_idxs: list[int] = []
+
+        for idx in test_idxs:
+            idx_angle_off_straight = self.angle_off_straight(idx, edge.idxs[first], edge.idxs[second], state)
+
+            # If test point is too squewed, immediately reject
+            if abs(idx_angle_off_straight) > max_angle_change_rad:
+                continue
+
+            # # Consider curvature direction of edge
+            if edge.length > 2:
+                edge_end_angle = self.angle_off_straight(edge.idxs[first], edge.idxs[second], edge.idxs[third], state)
+                # Checks that the change in angle isn't unnaturally big
+                if abs(edge_end_angle - idx_angle_off_straight) > max_consecutive_angle_change_rad:
+                    continue
+            
+            valid_idxs.append(idx)
 
         return valid_idxs
 
-    def angle_between_points(self, a, b, c):
+    def angle_off_straight(self, idx1, idx2, idx3, state: FrameState):
         """
-        Returns the angle ABC (in radians) between points a, b, c.
-        Angle is always between 0 and pi.
-        a, b, c are array-like (length 2 or 3).
+        Returns the angle ABC (in radians) between clusters
+        Angle is always between 0 and 2 pi.
         """
-        v1 = a - b
+        a = state.clusters[idx1]
+        b = state.clusters[idx2]
+        c = state.clusters[idx3]
+        v1 = b - a
         v2 = c - b
-
-        # normalise
-        v1_norm = v1 / np.linalg.norm(v1)
-        v2_norm = v2 / np.linalg.norm(v2)
+        cross = v1[0] * v2[1] - v1[1] * v2[0]
+        dot = np.dot(v1, v2)
+        return np.arctan2(cross, dot)
+        # # normalise
+        # v1_norm = v1 / np.linalg.norm(v1)
+        # v2_norm = v2 / np.linalg.norm(v2)
 
         # dot product
-        dot = np.dot(v1_norm, v2_norm)
+        # dot = np.dot(v1_norm, v2_norm)
 
-        # clamp for numerical stability
-        dot = np.clip(dot, -1.0, 1.0)
+        # # clamp for numerical stability
+        # dot = np.clip(dot, -1.0, 1.0)
 
-        return np.arccos(dot)
+        # return np.pi - np.arccos(dot)
 
     def fit_curve(self, edge: Edge, state: FrameState):
         x = state.clusters[edge.idxs][0]
