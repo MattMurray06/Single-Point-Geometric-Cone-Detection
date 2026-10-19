@@ -3,7 +3,8 @@ geometry_node:
     detection_algorithm: "edge propagation" # gaussian propagation; edge propagation; cpd; centreline propagation; voting; edge propagation
     debug: true
     propagation_distance: 1.0
-    track_width: 4.4
+    track_width: 4.0
+    min_track_width: 2.0
     sigma_longitudinal: 2.0
     sigma_lateral: 0.2
     max_mahalanobis_distance: 1.0
@@ -14,6 +15,6 @@ geometry_node:
     edge_min_neighbour_radius: 0.2
     max_angle_change: 30.0
     wall_density_threshold: 1.0
-    max_consecutive_angle_change: 15.0
+    max_consecutive_angle_change: 30.0
     beam_search_angle_deg: 30.0
     plot_growth: False

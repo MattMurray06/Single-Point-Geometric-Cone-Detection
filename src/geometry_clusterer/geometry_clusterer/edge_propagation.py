@@ -3,7 +3,12 @@ import numpy as np
 from scipy.spatial import cKDTree
 from dataclasses import dataclass
 from scipy.optimize import least_squares
+from scipy.interpolate import BSpline, make_interp_spline
 from collections import deque
+import logging 
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 @dataclass
 class FrameState:
@@ -13,11 +18,20 @@ class FrameState:
 @dataclass
 class Edge:
     idxs: list[int]
+    family_id: int
     stopped_growing: bool = False
 
     @property
     def length(self):
         return len(self.idxs)
+
+@dataclass
+class CandidateCluster:
+    idx: int
+    angle_off_straight_rad: float
+    distance: float
+    penalty: float
+
 
 @dataclass
 class Candidate:
@@ -53,6 +67,8 @@ class EdgePropagation(ConeDetector):
         wall_density_threshold: float = 1.0,
         max_consecutive_angle_change: float = 20.0,
         plot_growth: bool = False,
+        max_track_width: float = 4.0,
+        min_track_width: float = 2.0
     ):
         self.max_neighbour_radius = max_neighbour_radius
         self.min_neighbour_radius = min_neighbour_radius
@@ -60,6 +76,8 @@ class EdgePropagation(ConeDetector):
         self.wall_density_threshold = wall_density_threshold
         self.max_consecutive_angle_change = max_consecutive_angle_change
         self.plot_growth = plot_growth
+        self.max_track_width = max_track_width
+        self.min_track_width = min_track_width
 
     def detect_cones(self, cluster_centres: list[Cluster]) -> object:
         """
@@ -79,63 +97,99 @@ class EdgePropagation(ConeDetector):
         tree = cKDTree(cluster_xy)
         state = FrameState(cluster_xy, tree)
 
-        edge_families: list[EdgeFamily] = self.find_edge_families(state)
-
-        # best_edges: list[Edge] = self.extract_best_edges(edge_families, state)
+        edge_candidates: list[Edge] = self.find_edges(state)
 
         # Determine pairs of edges that form track segments
-        track_segments: list[tuple[EdgeFamily, EdgeFamily]] = self.retrieve_track_segments(edge_families, state)
+        track_segments: list[tuple[Edge, Edge]] = self.retrieve_track_segments(edge_candidates, state)
 
         # This will be a subset of edge_families - only the ones that form part of the track
-        track_edge_families: list[EdgeFamily] = list({
-            family.family_id: family
+        track_edges = list({
+            edge.family_id: edge
             for track_segment in track_segments
-            for family in track_segment
+            for edge in track_segment
         }.values())
 
-        self.plot_edges(state, edge_families, 0)
-        self.plot_edges(state, track_edge_families, 0)
+        self.plot_edges(state, edge_candidates)
+        self.plot_edges(state, track_edges)
 
-    def find_edge_families(self, state: FrameState) -> list[EdgeFamily]:
+    def find_edges(self, state: FrameState) -> list[Edge]:
+        """
+        Returns a list of plausible track edges
+        """
         visited_idxs: set[int] = set()
         edge_families: list[EdgeFamily] = []
-        family_idx = 0
+        family_id = 0
         for i in range(len(state.clusters)):
             if i in visited_idxs:
                 continue
 
-            edge_family, newly_visited = self.find_edges_from_cluster(i, state, family_idx)
+            edge_family, newly_visited = self.find_edges_from_cluster(i, state, family_id)
+
+            if not edge_family:
+                continue
+
             visited_idxs.update(newly_visited)
 
             # Many edges are dense, wall families. these should be removed
             if self.is_likely_wall_family(edge_family, state):
                 continue
 
-            if edge_family.edges:
-                edge_families.append(edge_family)
-                family_idx += 1
+            # Edge families with few members ('stump' families) often are very multidirectional. If this is the case, then these should be broken into numerous families. They are, after all, representing truly different edge hypotheses
+            # This also updates family_id to be ready for the next iteration
+            new_edge_families, family_id = self.break_distinct_families(edge_family)
 
-        return edge_families
+            edge_families.extend(new_edge_families)
 
-    # def extract_best_edges(self, edge_families: list[EdgeFamily], state: FrameState) -> list[Edge]:
-    #     for familiy in edge_families:
-    #         for edge in familiy:
-    #             self.score(edge)
+        # extracting maximial edges can be done earlier in the pipeline - however, I'm keeping full family generation in for now, while experimenting
+        maximal_edges: list[Edge] = []
+        for family in edge_families:
+            max_edges = [e for e in family.edges if e.length == family.max_length]
+            if len(max_edges) > 1:
+                logger.warning("More than 1 max edge detected on family %i", family.family_id + 1)
+
+            maximal_edges.append(max_edges[0])
             
-        
-    #     return NotImplementedError
+        return maximal_edges
 
-    def retrieve_track_segments(self, edge_families: list[EdgeFamily], state: FrameState) -> list[tuple[EdgeFamily, EdgeFamily]]:
-        track_segments: list[tuple[EdgeFamily, EdgeFamily]] = []
+    def retrieve_track_segments(self, max_edges: list[Edge], state: FrameState) -> list[tuple[Edge, Edge]]:
+        track_segments: list[tuple[Edge, Edge]] = []
 
-        for family_index, family_1 in enumerate(edge_families):
-            for family_2 in edge_families[family_index + 1:]:
-                if self.test_pair_compatability(family_1, family_2, state):
-                    track_segments.append((family_1, family_2))
+        for i, edge1 in enumerate(max_edges):
+            for edge2 in max_edges[i+1:]:
+                if not self.test_pair_compatability(edge1, edge2, state):
+                    continue
+                
+                track_segments.append((edge1, edge2))
 
         return track_segments
 
-    def edges_are_close(self, edge_1: Edge, edge_2: Edge, state: FrameState, max_gap: float = 5.0) -> bool:
+    def break_distinct_families(self, edge_family: EdgeFamily) -> tuple[list[EdgeFamily], int]:
+        """
+        Breaks one family down into several distinct families. 
+        Returns the new families, and the new family_id to work with
+        Justification:
+        Some families of edges should truly be numerous families. This is becuase they have edges that point in very different directions, representing different edge hypothese
+        when a family of edges is only 2 or 3 clusters long, it hasn't had time to gain evidence for a certain edge / direction
+        hence, we'll have possibly many different edges emanating from the start cluster, all in different directions
+        - some of these will cross the track and land on the opposing side.
+        - however, sometimes these form a genuine pair of clusters on an edge.
+        we want these to be separte families - they are different edge hypothese, after all.
+
+        hence, for families of few cones, we break them down into distinct families
+        """
+        # families with an edge bigger than 3 already have a defined 'most likely edge' (and will have performed stump removal)
+        if edge_family.max_length > 3:
+            return [edge_family], edge_family.family_id + 1
+
+        expanded_edge_family = []
+        cur_family_id = edge_family.family_id
+        for edge in edge_family.edges:
+            expanded_edge_family.append(EdgeFamily([edge], cur_family_id, edge_family.starting_idx, edge.length))
+            cur_family_id += 1
+
+        return expanded_edge_family, cur_family_id
+
+    def edges_are_close(self, edge_1: Edge, edge_2: Edge, state: FrameState, max_gap: float) -> bool:
         edge_1_start = state.clusters[edge_1.idxs[0]]
         edge_1_end = state.clusters[edge_1.idxs[-1]]
         edge_2_start = state.clusters[edge_2.idxs[0]]
@@ -151,53 +205,48 @@ class EdgePropagation(ConeDetector):
             and np.all(edge_2_max + max_gap >= edge_1_min)
         )
 
-    def test_pair_compatability(self, family_1: EdgeFamily, family_2: EdgeFamily, state: FrameState) -> bool:
-        # Temporary - annecdotally, families with over 100 hypothesis are always walls. However, an improved solution can be for sure found here
-        if len(family_1.edges) > 100 or len(family_2.edges) > 100:
-            return False
+    def test_pair_compatability(self, edge1: Edge, edge2: Edge, state: FrameState) -> bool:
 
-        family_1_idxs = {idx 
-                         for e in family_1.edges
-                         for idx in e.idxs}
+        """
+        Given a pair of edges, test if they could make a valid track segment
+        """
 
-        family_2_idxs = {idx 
-                         for e in family_2.edges
-                         for idx in e.idxs}
-
-        overlap = set(family_1_idxs) & set(family_2_idxs)
+        overlap = set(edge1.idxs) & set(edge2.idxs)
 
         if len(overlap) > 0:
             return False
 
-        edges_too_distant: bool = not self.edges_are_close(family_1.edges[0], family_2.edges[0], state) 
+        edges_too_distant: bool = not self.edges_are_close(edge1, edge2, state, self.max_track_width) 
         if edges_too_distant:
             return False
 
-        for i , edge_1 in enumerate(family_1.edges):
-            for j, edge_2 in enumerate(family_2.edges):
-                # check for overlap
-                # overlap = set(edge_1.idxs) & set(edge_2.idxs)
+        b1: BSpline = self.fit_spline(edge1, state)
+        b2: BSpline = self.fit_spline(edge2, state)
 
-                # if len(overlap) > 0:
-                #     continue
+        # to-do - polyline for check proximity 
+        # splines for checking derivatives
 
-                if self.test_edge_pair_too_close(edge_1, edge_2, state) == True:
-                    continue
+        if self.test_edge_pair_too_close(edge1, edge2, state):
+            return False
 
-                if self.test_edge_pair_parallelity(edge_1, edge_2, state) == False:
-                    continue
+        if self.edge_pair_roughly_parallel(edge1, edge2, state):
+            return False
 
-                # All tests past - return that a valid paid exists
-                return True
+        # All tests past - return that a valid paid exists
+        return True
 
-        return False
+    def fit_spline(self, edge: Edge, state: FrameState) -> BSpline:
+        edge_points = state.clusters[edge.idxs]
+        b: BSpline = make_interp_spline(edge_points[:, 0], edge_points[:, 1])
+
+        return b
 
     def test_edge_pair_too_close(self, edge_1: Edge, edge_2: Edge, state: FrameState):
         d2 = np.sum((state.clusters[edge_1.idxs][:, None, :] - state.clusters[edge_2.idxs][None, :, :])**2, axis=2)
         too_close = np.any(d2 < self.min_neighbour_radius**2)
         return too_close
 
-    def test_edge_pair_parallelity(self, edge_1: Edge, edge_2: Edge, state: FrameState):
+    def edge_pair_roughly_parallel(self, edge_1: Edge, edge_2: Edge, state: FrameState):
         parallel_pair: bool = False
 
         for k in range(len(edge_1.idxs) - 1):
@@ -243,8 +292,14 @@ class EdgePropagation(ConeDetector):
 
         return best_idx
 
-    def find_edges_from_cluster(self, start_idx: int, state: FrameState, family: int) -> tuple[EdgeFamily, set[int]]:
-        edge_family = EdgeFamily([Edge([start_idx])], family, start_idx, 1)
+    def find_edges_from_cluster(self, start_idx: int, state: FrameState, family_id: int) -> tuple[EdgeFamily, set[int]]:
+        edge_family = EdgeFamily(
+            [Edge([start_idx], family_id, stopped_growing=False)],
+            family_id,
+            start_idx, 
+            max_length = 1
+        )
+
         generation = 0
 
         while True:
@@ -269,11 +324,15 @@ class EdgePropagation(ConeDetector):
             edge_family.starting_idx,
             edge_family.max_length,
         )
+
         family_has_grown: bool = False
         for e in edge_family.edges:
             if e.stopped_growing == True:
                 if self.check_for_stump(e, edge_family) == False:
                     grown_edge_family.edges.append(e)
+                    logger.info("Adult edge %s kept in family %i", e, edge_family.family_id)
+                else:
+                    logger.info("Stump %s from family %i removed", e.idxs, edge_family.family_id + 1)
                 continue
 
             child_edge_hypotheses = self.propose_extensions(e, state)
@@ -282,12 +341,30 @@ class EdgePropagation(ConeDetector):
                 e.stopped_growing = True
                 grown_edge_family.edges.append(e)
             else:
+
                 grown_edge_family.edges.extend(child_edge_hypotheses)
                 family_has_grown = True
 
+                if logger.isEnabledFor(logging.INFO):
+                    new_idxs = [
+                        idx
+                        for h in child_edge_hypotheses
+                        for idx in h.idxs
+                        if idx not in e.idxs
+                    ]
+
+                    logger.info(
+                        "Edge %s in family %i grown to idx's %s. Length now %i",
+                        e.idxs,
+                        edge_family.family_id + 1,
+                        new_idxs,
+                        e.length + 1,
+                    )
+
         if family_has_grown: 
             grown_edge_family.max_length += 1
-        
+
+        logger.info("Family %i now finished growth with %i edges", edge_family.family_id + 1, len(grown_edge_family.edges))
         return grown_edge_family
 
     def check_for_stump(self, edge: Edge, family: EdgeFamily):
@@ -307,7 +384,8 @@ class EdgePropagation(ConeDetector):
 
         for edge in edge_family.edges:
             key = tuple(edge.idxs)
-            if key in seen:
+            keyr = tuple(edge.idxs[::-1])
+            if key in seen or keyr in seen:
                 continue
 
             seen.add(key)
@@ -350,28 +428,48 @@ class EdgePropagation(ConeDetector):
         return False
         
     def propose_extensions(self, edge: Edge, state: FrameState) -> list[Edge]:
-        child_edges = []
+        """
+        Based on a (growing) edge, we find potential next cones in that edge
+        These next cones must, obviously, lie roughly (+- 30 degrees ish) straight on from the previous edge - edges of the track must be relatively smooth, naturally
+        Returns a list of proposed extended edges
+        """
+
         if edge.length == 1:
-            candidate_idxs = self.nearby_candidates(state.clusters[edge.idxs[0]], edge, state)
-            child_edges.extend(self.append_candidates_to_edge(candidate_idxs, edge, True))
-        else:
-            start_candidate_idxs = self.nearby_candidates(state.clusters[edge.idxs[0]], edge, state)
-            end_candidate_idxs = self.nearby_candidates(state.clusters[edge.idxs[-1]], edge, state)
+            candidates = self.nearby_candidates(state.clusters[edge.idxs[0]], edge, state)
 
-            start_candidate_idxs = self.select_valid_candidates(start_candidate_idxs, edge, False, state)
-            end_candidate_idxs = self.select_valid_candidates(end_candidate_idxs, edge, True, state)
+            # In the length = 1 case, this will simply select the relatively close candidates
+            candidate_idxs = self.select_valid_candidates(candidates, edge, False, state)
+            return self.append_candidates_to_edge(candidate_idxs, edge, True)
 
-            child_edges.extend(self.append_candidates_to_edge(start_candidate_idxs, edge, False))
-            child_edges.extend(self.append_candidates_to_edge(end_candidate_idxs, edge, True))
+        child_edges = []
+        start_candidates = self.nearby_candidates(state.clusters[edge.idxs[0]], edge, state)
+        end_candidates = self.nearby_candidates(state.clusters[edge.idxs[-1]], edge, state)
+
+        start_candidates = self.select_valid_candidates(start_candidates, edge, False, state)
+        end_candidates = self.select_valid_candidates(end_candidates, edge, True, state)
+
+        child_edges.extend(self.append_candidates_to_edge(start_candidates, edge, False))
+        child_edges.extend(self.append_candidates_to_edge(end_candidates, edge, True))
+
         return child_edges
 
-    def select_valid_candidates(self, test_idxs: list[int], edge: Edge, extend_at_end: bool, state: FrameState) -> list[int]:
+    def select_valid_candidates(self, candidates: list[CandidateCluster], edge: Edge, extend_at_end: bool, state: FrameState) -> list[int]:
+        def penalty(candidate: CandidateCluster):
+            # Prioritise closer candidates, unless angle is significantly nicer 
+            ANGLE_WEIGHT = 0.0
+            DISTANCE_WEIGHT = 1 - ANGLE_WEIGHT
+            return ANGLE_WEIGHT * (abs(candidate.angle_off_straight_rad)/(np.pi/6)) + DISTANCE_WEIGHT * abs(1.2 - candidate.distance)
+
         """
         Given an edge and a bunch of proposed extensions (i.e. adding a cluster to the end of the edge), test whether those extensions make sense geometrically. 
         To do this, we check whether each extension creates a sensible continution of the track, based on the change of angle it makes with previous segments.
         """
+        if not candidates:
+            return []
+
         if edge.length <= 1:
-            return test_idxs
+            return [c.idx for c in candidates]
+            # return [min(candidates, key=lambda c: c.distance).idx]
 
         max_consecutive_angle_change_rad = np.deg2rad(self.max_consecutive_angle_change)
         max_angle_change_rad = np.deg2rad(self.max_angle_change + 10)
@@ -379,31 +477,42 @@ class EdgePropagation(ConeDetector):
         if extend_at_end:
             first, second, third = -1, -2, -3
 
+        verified_candidates: list[CandidateCluster] = []
+        
+        for candidate in candidates:
+            candidate.angle_off_straight_rad = self.angle_off_straight(candidate.idx, edge.idxs[first], edge.idxs[second], state)
 
-        valid_idxs: list[int] = []
-
-        for idx in test_idxs:
-            idx_angle_off_straight = self.angle_off_straight(idx, edge.idxs[first], edge.idxs[second], state)
-
-            # If test point is too squewed, immediately reject
-            if abs(idx_angle_off_straight) > max_angle_change_rad:
+            # If candidate is too squewed, immediately reject
+            if abs(candidate.angle_off_straight_rad) > max_angle_change_rad:
                 continue
 
-            # # Consider curvature direction of edge
+            # Consider curvature direction of edge
             if edge.length > 2:
                 edge_end_angle = self.angle_off_straight(edge.idxs[first], edge.idxs[second], edge.idxs[third], state)
                 # Checks that the change in angle isn't unnaturally big
-                if abs(edge_end_angle - idx_angle_off_straight) > max_consecutive_angle_change_rad:
+                if abs(edge_end_angle - candidate.angle_off_straight_rad) > max_consecutive_angle_change_rad:
                     continue
-            
-            valid_idxs.append(idx)
 
-        return valid_idxs
+            # Calculates a penalty for choosing this candidate. Closer = better, smaller angle change = better
+            candidate.penalty = penalty(candidate)
+            verified_candidates.append(candidate)
+
+        # Select the best scoring edge
+        if not verified_candidates:
+            return []
+
+        # Finds the candidate with the lowest penalty - prioritises close and fairly straight candidates
+        best_candidate = min(verified_candidates, key = lambda c: c.penalty)
+        # Finds all candidates similar to the best candidate, including the best candidate. Often, this will only be the best. However, if there are more than 1 similarly scored candidates, it is important to keep both
+        # good_candidates = [c for c in verified_candidates if (c.penalty <= best_candidate.penalty * 1.0)]
+            
+        # return [c.idx for c in good_candidates]
+        return [best_candidate.idx]
 
     def angle_off_straight(self, idx1, idx2, idx3, state: FrameState):
         """
-        Returns the angle ABC (in radians) between clusters
-        Angle is always between 0 and 2 pi.
+        Returns angle off straight (in radians) between three clusters
+        Angle is between -pi and pi.
         """
         a = state.clusters[idx1]
         b = state.clusters[idx2]
@@ -413,17 +522,6 @@ class EdgePropagation(ConeDetector):
         cross = v1[0] * v2[1] - v1[1] * v2[0]
         dot = np.dot(v1, v2)
         return np.arctan2(cross, dot)
-        # # normalise
-        # v1_norm = v1 / np.linalg.norm(v1)
-        # v2_norm = v2 / np.linalg.norm(v2)
-
-        # dot product
-        # dot = np.dot(v1_norm, v2_norm)
-
-        # # clamp for numerical stability
-        # dot = np.clip(dot, -1.0, 1.0)
-
-        # return np.pi - np.arccos(dot)
 
     def fit_curve(self, edge: Edge, state: FrameState):
         x = state.clusters[edge.idxs][0]
@@ -449,15 +547,15 @@ class EdgePropagation(ConeDetector):
         child_edges: list[Edge] = []
         for c in candidate_idxs:
             if end:
-                child_edges.append(Edge([*edge.idxs, c]))
+                child_edges.append(Edge([*edge.idxs, c], edge.family_id))
             else:
-                child_edges.append(Edge([c, *edge.idxs]))
+                child_edges.append(Edge([c, *edge.idxs], edge.family_id))
         return child_edges
 
-    def plot_edges(
+    def plot_families(
         self,
         state: FrameState,
-        edge_families: list[EdgeFamily],
+        families: list[EdgeFamily],
         generation: int,
     ) -> None:
         import matplotlib.pyplot as plt
@@ -479,7 +577,7 @@ class EdgePropagation(ConeDetector):
                 textcoords="offset points",
             )
 
-        family_ids = sorted(family.family_id for family in edge_families)
+        family_ids = sorted(family.family_id for family in families)
         color_map = plt.get_cmap("tab20")
         family_colors = {
             family_id: color_map(index % 20)
@@ -487,7 +585,7 @@ class EdgePropagation(ConeDetector):
         }
         labelled_families: set[int] = set()
 
-        for family in edge_families:
+        for family in families:
             for edge in family.edges:
                 points = state.clusters[edge.idxs]
                 color = family_colors[family.family_id]
@@ -510,7 +608,7 @@ class EdgePropagation(ConeDetector):
                     zorder=2,
                 )
 
-        starting_idxs = [family.starting_idx for family in edge_families]
+        starting_idxs = [family.starting_idx for family in families]
         if starting_idxs:
             starts = state.clusters[starting_idxs]
             axes.scatter(
@@ -524,27 +622,110 @@ class EdgePropagation(ConeDetector):
             )
         axes.set_title(
             f"Edge generation {generation}: "
-            f"{sum(len(family.edges) for family in edge_families)} hypotheses"
+            f"{sum(len(family.edges) for family in families)} hypotheses"
         )
         axes.set_xlabel("y - lateral / right (m)")
         axes.set_ylabel("x - forward (m)")
-        axes.set_aspect("equal", adjustable="datalim")
+        axes.set_ylim(-60, 60)  # lateral
+        axes.set_xlim(-80, 80)  # forward
+        axes.set_aspect("equal", adjustable="box")
         axes.grid(True, alpha=0.25)
-        axes.legend(title="Plot key", loc="best")
+        axes.legend(
+            title="Plot key",
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1),
+            fontsize=8,
+        )
         figure.tight_layout()
 
         plt.show(block=True)
         plt.close(figure)
 
-    def nearby_candidates(self, centre_point, edge: Edge, state: FrameState) -> list[int]:
+    def plot_edges(
+        self,
+        state: FrameState,
+        edges: list[Edge],
+    ) -> None:
+        import matplotlib.pyplot as plt
+
+        figure, axes = plt.subplots()
+        axes.scatter(
+            state.clusters[:, 1],
+            state.clusters[:, 0],
+            color="0.65",
+            label="Detected cone",
+            zorder=1,
+        )
+
+        for idx, point in enumerate(state.clusters):
+            axes.annotate(
+                str(idx),
+                (point[1], point[0]),
+                xytext=(3, 3),
+                textcoords="offset points",
+            )
+
+        family_ids = sorted(family.family_id for family in edges)
+        color_map = plt.get_cmap("tab20")
+        family_colors = {
+            family_id: color_map(index % 20)
+            for index, family_id in enumerate(family_ids)
+        }
+        labelled_families: set[int] = set()
+
+        for edge in edges:
+            points = state.clusters[edge.idxs]
+            color = family_colors[edge.family_id]
+            label = (
+                f"Family {edge.family_id + 1}"
+                if edge.family_id not in labelled_families
+                else None
+            )
+            labelled_families.add(edge.family_id)
+            linestyle = "-" if edge.stopped_growing else "--"
+
+            axes.plot(
+                points[:, 1],
+                points[:, 0],
+                marker="o",
+                color=color,
+                linestyle=linestyle,
+                alpha=0.55,
+                label=label,
+                zorder=2,
+            )
+
+        axes.set_title(
+            f"{len(edges)} hypotheses"
+        )
+        axes.set_xlabel("y - lateral / right (m)")
+        axes.set_ylabel("x - forward (m)")
+        axes.set_ylim(-60, 60)  # lateral
+        axes.set_xlim(-80, 80)  # forward
+        axes.set_aspect("equal", adjustable="box")
+        axes.grid(True, alpha=0.25)
+        axes.legend(
+            title="Plot key",
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1),
+            fontsize=8,
+        )
+        figure.tight_layout()
+
+        plt.show(block=True)
+        plt.close(figure)
+
+    def nearby_candidates(self, centre_point, edge: Edge, state: FrameState) -> list[CandidateCluster]:
         """
         Given a centre point, find indices of all clusters nearby and that aren't already in the hypothesis
         Nearby definition: within the ring of where a cone could lie
         """
         nearby_idxs = state.tree.query_ball_point(centre_point, self.max_neighbour_radius, 2)
-        valid_idxs: list[int] = []
+        valid_idxs: list[CandidateCluster] = []
         for idx in nearby_idxs:
             idx_already_in_hypothesis : bool = idx in edge.idxs or idx in edge.idxs
-            if np.linalg.norm(state.clusters[idx] - centre_point) > self.min_neighbour_radius and not idx_already_in_hypothesis:
-                valid_idxs.append(idx)
+            distance = np.linalg.norm(state.clusters[idx] - centre_point) 
+            if distance > self.min_neighbour_radius and not idx_already_in_hypothesis:
+                # 100.0 set arbritarily
+                valid_idxs.append(CandidateCluster(idx, 100.0, distance, 100.0))
         return valid_idxs

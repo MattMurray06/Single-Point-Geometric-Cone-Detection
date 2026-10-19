@@ -42,6 +42,7 @@ class GeometryNode(Node):
         self.declare_parameter('max_consecutive_angle_change', 20.0)
         self.declare_parameter('beam_search_angle_deg', 30.0)
         self.declare_parameter('plot_growth', False)
+        self.declare_parameter('min_track_width', 2.0)
 
         self.algorithm = self.get_parameter('detection_algorithm').get_parameter_value().string_value.lower()
         self.debug = self.get_parameter('debug').value
@@ -80,6 +81,7 @@ class GeometryNode(Node):
             'beam_search_angle_deg'
         ).value
         self.plot_growth = self.get_parameter('plot_growth').value
+        self.min_track_width = self.get_parameter('min_track_width').value
 
         self.detection_alg = self.create_detection_algorithm(
             self.algorithm,
@@ -98,6 +100,7 @@ class GeometryNode(Node):
             self.max_consecutive_angle_change,
             self.beam_search_angle_deg,
             self.plot_growth,
+            self.min_track_width,
         )
 
         self.cluster_info_sub_ = self.create_subscription(
@@ -143,6 +146,7 @@ class GeometryNode(Node):
         max_consecutive_angle_change: float,
         beam_search_angle_deg: float,
         plot_growth: bool,
+        min_track_width: float,
     ) -> ConeDetector:
         algorithms: dict[str, type[ConeDetector]] = {
             'cpd': CPD,
@@ -176,6 +180,8 @@ class GeometryNode(Node):
                 wall_density_threshold=wall_density_threshold,
                 max_consecutive_angle_change=max_consecutive_angle_change,
                 plot_growth=plot_growth,
+                max_track_width=track_width,
+                min_track_width=min_track_width
             )
         if algorithm == 'voting':
             return CentreLineVoting(track_width=track_width)
