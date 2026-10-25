@@ -33,7 +33,7 @@ def generate_launch_description():
             'launch',
             'geometry_clusterer.launch.py'
         )
-    ), launch_arguments={"log_level": "warn"}.items())
+    ), launch_arguments={"log_level": "info"}.items())
 
 
     return LaunchDescription([

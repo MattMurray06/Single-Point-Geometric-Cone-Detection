@@ -14,7 +14,7 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument("log_level", default_value="warn"),
+            DeclareLaunchArgument("log_level", default_value="info"),
             Node(
                 package="geometry_clusterer",
                 executable="geometry_node",

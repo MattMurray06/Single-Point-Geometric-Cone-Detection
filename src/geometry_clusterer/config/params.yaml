@@ -4,7 +4,7 @@ geometry_node:
     debug: true
     propagation_distance: 1.0
     track_width: 4.0
-    max_track_width: 4.5
+    max_track_width: 4.7
     min_track_width: 2.5
     sigma_longitudinal: 2.0
     sigma_lateral: 0.2

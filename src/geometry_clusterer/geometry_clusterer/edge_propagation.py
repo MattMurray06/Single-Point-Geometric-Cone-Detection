@@ -8,7 +8,7 @@ from collections import deque
 import logging 
 
 logger = logging.getLogger(__name__)
-# logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 @dataclass
 class FrameState:
@@ -111,8 +111,8 @@ class EdgePropagation(ConeDetector):
 
         cones = np.array([state.clusters[idx] for edge in track_edges for idx in edge.idxs])
 
-        # self.plot_edges(state, edge_candidates)
         # self.plot_edges(state, track_edges)
+        # self.plot_edges(state, edge_candidates)
         return cones
 
     def find_edges(self, state: FrameState) -> list[Edge]:
@@ -141,7 +141,7 @@ class EdgePropagation(ConeDetector):
             # Many edges are dense, wall families. these should be removed
             if self.is_likely_wall_family(edge_family, state):
                 logger.info("Family %i deemed likely wall family", edge_family.family_id)
-                continue
+                # continue
 
             # Edge families with few members ('stump' families) often are very multidirectional. If this is the case, then these should be broken into numerous families. They are, after all, representing truly different edge hypotheses
             # This also updates family_id to be ready for the next iteration
@@ -193,6 +193,7 @@ class EdgePropagation(ConeDetector):
         expanded_edge_family = []
         cur_family_id = edge_family.family_id
         for edge in edge_family.edges:
+            edge.family_id = cur_family_id
             expanded_edge_family.append(EdgeFamily([edge], cur_family_id, edge_family.starting_idx, edge.length))
             cur_family_id += 1
 
@@ -203,11 +204,14 @@ class EdgePropagation(ConeDetector):
 # Track Finding
 
     def test_pair_compatability(self, edge0: Edge, edge1: Edge, state: FrameState) -> bool:
-
         """
         Given a pair of edges, test if they could make a valid track segment
         """
         logger.info("Testing compatability of edges %i and %i", edge0.family_id + 1, edge1.family_id+1)
+
+        # We can't justify matching edges that are only a pair and a trio - this could be a wall segment
+        if len(edge0.idxs) + len(edge1.idxs) <= 5:
+            return False
 
         overlap = set(edge0.idxs) & set(edge1.idxs)
 
@@ -223,10 +227,6 @@ class EdgePropagation(ConeDetector):
         if not self.edge_pair_valid_distance(edge0, edge1, state):
             return False
 
-        # if self.edge_pair_roughly_parallel(edge0, edge1, state):
-        #     return False
-
-        # All tests past - return that a valid paid exists
         return True
 
     def edges_are_close(self, edge_1: Edge, edge_2: Edge, state: FrameState, max_gap: float) -> bool:
@@ -254,26 +254,74 @@ class EdgePropagation(ConeDetector):
 
     def edge_pair_valid_distance(self, edge_0: Edge, edge_1: Edge, state: FrameState):
         def set_same_ordering(edge_0xy: np.ndarray, edge_1xy: np.ndarray) -> np.ndarray:
+            # Assumptions: this assumes that the end points of two paired edges face in the same direction. In some cases, for example with one very long edge which curves around, this may be false
             # Set direction such that we're comparing in the right order
-            closest_end = np.argmin([np.linalg.norm(edge_0xy[0] - edge_1xy[0]), np.linalg.norm(edge_0xy[0] - edge_1xy[-1])])
-            edge_1xy = edge_1xy[::-1] if closest_end == 1 else edge_1xy
+            ordering_0 = (edge_0xy[-1] - edge_0xy[0]) / np.linalg.norm(edge_0xy[-1] - edge_0xy[0])
+            ordering_1 = (edge_1xy[-1] - edge_1xy[0]) / np.linalg.norm(edge_1xy[-1] - edge_1xy[0])
+            edge_1xy = edge_1xy[::-1] if np.dot(ordering_0, ordering_1) < 0 else edge_1xy
+            # closest_end = np.argmin([np.linalg.norm(edge_0xy[0] - edge_1xy[0]), np.linalg.norm(edge_0xy[0] - edge_1xy[-1])])
+            # edge_1xy = edge_1xy[::-1] if closest_end == 1 else edge_1xy
             return edge_1xy
 
         edge_0xy: np.ndarray = state.clusters[edge_0.idxs]
         edge_1xy: np.ndarray = state.clusters[edge_1.idxs]
 
-        edge_1xy = set_same_ordering(edge_0xy, edge_1xy)
+        edge_1xy_ordered = set_same_ordering(edge_0xy, edge_1xy)
 
-        return self.compare_distances(edge_0xy, edge_1xy, state)
+        return self.compare_distances_and_angling(edge_0xy, edge_1xy_ordered, state)
     
-    def compare_distances(self, edge_0xy: np.ndarray, edge_1xy: np.ndarray, state:FrameState):
-        def calculate_leading_edge(leading_at_start: bool):
+    def compare_distances_and_angling(self, edge_0xy: np.ndarray, edge_1xy: np.ndarray, state:FrameState):
+        def norm(v: np.ndarray):
+            norm = np.linalg.norm(v)
+            return np.array([-v[1], v[0]]) / norm
+        
+        def calculate_leading_edge(leading_at_start: bool) -> int:
+            first, second = (0, 1) if leading_at_start else (-1, -2)
+
+            # Outward-pointing tangent for each edge
+            t0 = edge_0xy[first] - edge_0xy[second]
+            t1 = edge_1xy[first] - edge_1xy[second]
+
+            norm0 = np.linalg.norm(t0)
+            norm1 = np.linalg.norm(t1)
+
+            eps = 1e-10
+            if norm0 < eps or norm1 < eps:
+                logger.warning("Degenerate edge tangent")
+                return 0
+
+            t0 /= norm0
+            t1 /= norm1
+
+            # Average the unit tangents
+            direction = t0 + t1
+            norm_direction = np.linalg.norm(direction)
+
+            # If tangents nearly cancel, fall back to edge 0
+            if norm_direction < eps:
+                logger.warning("Opposing tangents; falling back to edge 0")
+                direction = t0
+            else:
+                direction /= norm_direction
+
+            # Positive projection means edge 1 extends further outward
+            dot_product = np.dot(
+                direction,
+                edge_1xy[first] - edge_0xy[first]
+            )
+
+            logger.debug("Leading direction: %s, projection: %.3f",
+                        direction, dot_product)
+
+            return 1 if dot_product > 0 else 0
+        def calculate_leading_edge_old(leading_at_start: bool):
             # start of edge case
             first, second = 0, 1
             if leading_at_start is False:
                 first, second = -1, -2
             
             start_direction = (edge_0xy[first] - edge_0xy[second]) / np.linalg.norm(edge_0xy[first] - edge_0xy[second])
+            logger.info("Start direction: %s", start_direction)
             # In the coordinate frame of the start_direction, dot product gives us the coefficient in the start_direction direction. 
             # The minus edge_0xy[first] is to ensure the origin is at that point
             dot_product = np.dot(start_direction, edge_1xy[first] - edge_0xy[first])
@@ -294,12 +342,43 @@ class EdgePropagation(ConeDetector):
             dense_edge.append(edge[-1])
             return np.asarray(dense_edge) 
 
-        def valid_spacing(dists):
-            min_dist = np.min(dists)
-            logger.info("Dist was %f", min_dist)
-            if min_dist > self.min_track_width and min_dist < self.max_track_width:
+        def valid_spacing(dists, leading_edge: int, start: bool):
+            min_dist_idx = np.argmin(dists)
+
+            first, second = (0, 1) if start else (-1, -2)
+
+            # This is the perpencidular (unit) vector to the shorter edge
+            perp = norm(edge_set[not leading_edge][first] - edge_set[not leading_edge][second])
+
+            perp_separation = abs(np.dot(edge_set[leading_edge][min_dist_idx] - edge_set[not leading_edge][first], perp))
+
+            logger.info("Dist was %f", min_dist_idx)
+            if perp_separation > self.min_track_width and perp_separation < self.max_track_width:
                 return True
             return False
+
+        def valid_angling(dists, leading, test_at_start: bool):
+            first, second = (0, 1) if test_at_start else (-1, -2)
+
+            min_dist_idx = np.argmin(dists)
+
+            edge = edge_set[leading]
+            shorter = edge_set[1 - leading]
+
+            neighbouring_idx = min_dist_idx - 1 if min_dist_idx > 0 else min_dist_idx + 1
+
+            # Tangents to both edges at the closest points
+            leading_edge_dir = edge[min_dist_idx] - edge[neighbouring_idx]
+            shorter_edge_dir = shorter[first] - shorter[second]
+
+            leading_edge_dir /= np.linalg.norm(leading_edge_dir)
+            shorter_edge_dir /= np.linalg.norm(shorter_edge_dir)
+
+            # Compare angles (dot product avoids arccos)
+            dot = np.dot(leading_edge_dir, shorter_edge_dir)
+            return abs(dot) > np.cos(np.deg2rad(50))
+
+        logger.info("Edge 0 starts with %s, Edge 1 with %s", edge_0xy[0], edge_1xy[0])
 
         leading_start = calculate_leading_edge(leading_at_start = True)
         leading_end = calculate_leading_edge(leading_at_start = False)
@@ -311,9 +390,14 @@ class EdgePropagation(ConeDetector):
         edge_set = [edge_0xy, edge_1xy]
 
         dists_start = np.linalg.norm(edge_set[leading_start] - edge_set[not leading_start][0], axis=1)
+        logger.info("Distance taken between %s and %s", edge_set[leading_start][np.argmin(dists_start)], edge_set[not leading_start][0])
         dists_end = np.linalg.norm(edge_set[leading_end] - edge_set[not leading_end][-1], axis=1)
+        logger.info("Distance taken between %s and %s", edge_set[leading_end][np.argmin(dists_end)], edge_set[not leading_end][-1])
 
-        if not valid_spacing(dists_start) or not valid_spacing(dists_end):
+        if not valid_spacing(dists_start, leading_start, start=True) or not valid_spacing(dists_end, leading_end, start=False):
+            return False
+
+        if not valid_angling(dists_start, leading_start, test_at_start=True) or not valid_angling(dists_end, leading_end, test_at_start=False):
             return False
 
         return True
