@@ -8,7 +8,7 @@ from collections import deque
 import logging 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+# logging.basicConfig(level=logging.INFO)
 
 @dataclass
 class FrameState:
