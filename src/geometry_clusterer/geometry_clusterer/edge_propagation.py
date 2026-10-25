@@ -67,7 +67,7 @@ class EdgePropagation(ConeDetector):
         wall_density_threshold: float = 1.0,
         max_consecutive_angle_change: float = 20.0,
         plot_growth: bool = False,
-        max_track_width: float = 4.0,
+        max_track_width: float = 5.0,
         min_track_width: float = 2.0
     ):
         self.max_neighbour_radius = max_neighbour_radius
@@ -79,7 +79,7 @@ class EdgePropagation(ConeDetector):
         self.max_track_width = max_track_width
         self.min_track_width = min_track_width
 
-    def detect_cones(self, cluster_centres: list[Cluster]) -> object:
+    def detect_cones(self, cluster_centres: list[Cluster]) -> np.ndarray:
         """
         From clusters (clusters may be cones OR noise), determine the set of cones within this. Hence, determining map of the track
         Steps:
@@ -90,7 +90,7 @@ class EdgePropagation(ConeDetector):
         - Return cones that lie within these track segments (not implemented yet, but trivial)
         """
         if not cluster_centres:
-            return []
+            return np.array([])
         
         cluster_xy = np.array([c.position for c in cluster_centres])
 
@@ -109,8 +109,11 @@ class EdgePropagation(ConeDetector):
             for edge in track_segment
         }.values())
 
-        self.plot_edges(state, edge_candidates)
-        self.plot_edges(state, track_edges)
+        cones = np.array([state.clusters[idx] for edge in track_edges for idx in edge.idxs])
+
+        # self.plot_edges(state, edge_candidates)
+        # self.plot_edges(state, track_edges)
+        return cones
 
     def find_edges(self, state: FrameState) -> list[Edge]:
         """
@@ -126,12 +129,18 @@ class EdgePropagation(ConeDetector):
             edge_family, newly_visited = self.find_edges_from_cluster(i, state, family_id)
 
             if not edge_family:
+                logger.warning("Starting idx %i returned no family", edge_family.starting_idx)
                 continue
 
             visited_idxs.update(newly_visited)
 
+            if edge_family.max_length == 1:
+                logger.info("Starting idx %i gave length 1 family", edge_family.family_id)
+                continue
+
             # Many edges are dense, wall families. these should be removed
             if self.is_likely_wall_family(edge_family, state):
+                logger.info("Family %i deemed likely wall family", edge_family.family_id)
                 continue
 
             # Edge families with few members ('stump' families) often are very multidirectional. If this is the case, then these should be broken into numerous families. They are, after all, representing truly different edge hypotheses
@@ -189,6 +198,37 @@ class EdgePropagation(ConeDetector):
 
         return expanded_edge_family, cur_family_id
 
+
+##########################################
+# Track Finding
+
+    def test_pair_compatability(self, edge0: Edge, edge1: Edge, state: FrameState) -> bool:
+
+        """
+        Given a pair of edges, test if they could make a valid track segment
+        """
+        logger.info("Testing compatability of edges %i and %i", edge0.family_id + 1, edge1.family_id+1)
+
+        overlap = set(edge0.idxs) & set(edge1.idxs)
+
+        if len(overlap) > 0:
+            logger.debug("Removed due to overlap")
+            return False
+
+        edges_too_distant: bool = not self.edges_are_close(edge0, edge1, state, self.max_track_width) 
+        if edges_too_distant:
+            logger.debug("Removed since too distant")
+            return False
+
+        if not self.edge_pair_valid_distance(edge0, edge1, state):
+            return False
+
+        # if self.edge_pair_roughly_parallel(edge0, edge1, state):
+        #     return False
+
+        # All tests past - return that a valid paid exists
+        return True
+
     def edges_are_close(self, edge_1: Edge, edge_2: Edge, state: FrameState, max_gap: float) -> bool:
         edge_1_start = state.clusters[edge_1.idxs[0]]
         edge_1_end = state.clusters[edge_1.idxs[-1]]
@@ -205,47 +245,79 @@ class EdgePropagation(ConeDetector):
             and np.all(edge_2_max + max_gap >= edge_1_min)
         )
 
-    def test_pair_compatability(self, edge1: Edge, edge2: Edge, state: FrameState) -> bool:
-
-        """
-        Given a pair of edges, test if they could make a valid track segment
-        """
-
-        overlap = set(edge1.idxs) & set(edge2.idxs)
-
-        if len(overlap) > 0:
-            return False
-
-        edges_too_distant: bool = not self.edges_are_close(edge1, edge2, state, self.max_track_width) 
-        if edges_too_distant:
-            return False
-
-        b1: BSpline = self.fit_spline(edge1, state)
-        b2: BSpline = self.fit_spline(edge2, state)
-
-        # to-do - polyline for check proximity 
-        # splines for checking derivatives
-
-        if self.test_edge_pair_too_close(edge1, edge2, state):
-            return False
-
-        if self.edge_pair_roughly_parallel(edge1, edge2, state):
-            return False
-
-        # All tests past - return that a valid paid exists
-        return True
-
     def fit_spline(self, edge: Edge, state: FrameState) -> BSpline:
         edge_points = state.clusters[edge.idxs]
+        logger.info("Edge x, y points: %s, %s", edge_points[:, 0], edge_points[:, 1])
         b: BSpline = make_interp_spline(edge_points[:, 0], edge_points[:, 1])
 
         return b
 
-    def test_edge_pair_too_close(self, edge_1: Edge, edge_2: Edge, state: FrameState):
-        d2 = np.sum((state.clusters[edge_1.idxs][:, None, :] - state.clusters[edge_2.idxs][None, :, :])**2, axis=2)
-        too_close = np.any(d2 < self.min_neighbour_radius**2)
-        return too_close
+    def edge_pair_valid_distance(self, edge_0: Edge, edge_1: Edge, state: FrameState):
+        def set_same_ordering(edge_0xy: np.ndarray, edge_1xy: np.ndarray) -> np.ndarray:
+            # Set direction such that we're comparing in the right order
+            closest_end = np.argmin([np.linalg.norm(edge_0xy[0] - edge_1xy[0]), np.linalg.norm(edge_0xy[0] - edge_1xy[-1])])
+            edge_1xy = edge_1xy[::-1] if closest_end == 1 else edge_1xy
+            return edge_1xy
 
+        edge_0xy: np.ndarray = state.clusters[edge_0.idxs]
+        edge_1xy: np.ndarray = state.clusters[edge_1.idxs]
+
+        edge_1xy = set_same_ordering(edge_0xy, edge_1xy)
+
+        return self.compare_distances(edge_0xy, edge_1xy, state)
+    
+    def compare_distances(self, edge_0xy: np.ndarray, edge_1xy: np.ndarray, state:FrameState):
+        def calculate_leading_edge(leading_at_start: bool):
+            # start of edge case
+            first, second = 0, 1
+            if leading_at_start is False:
+                first, second = -1, -2
+            
+            start_direction = (edge_0xy[first] - edge_0xy[second]) / np.linalg.norm(edge_0xy[first] - edge_0xy[second])
+            # In the coordinate frame of the start_direction, dot product gives us the coefficient in the start_direction direction. 
+            # The minus edge_0xy[first] is to ensure the origin is at that point
+            dot_product = np.dot(start_direction, edge_1xy[first] - edge_0xy[first])
+
+            leading_edge: int = 0
+            if (dot_product > 0):
+                leading_edge = 1
+            return leading_edge
+    
+        def densify(edge: np.ndarray, num_points = 5) -> np.ndarray:
+            dense_edge = []
+
+            for p0, p1 in zip(edge[:-1], edge[1:]):
+                t = np.linspace(0, 1, num_points + 2)[:-1]  # exclude endpoint
+                segment = p0 + t[:, None] * (p1 - p0)
+                dense_edge.extend(segment)
+
+            dense_edge.append(edge[-1])
+            return np.asarray(dense_edge) 
+
+        def valid_spacing(dists):
+            min_dist = np.min(dists)
+            logger.info("Dist was %f", min_dist)
+            if min_dist > self.min_track_width and min_dist < self.max_track_width:
+                return True
+            return False
+
+        leading_start = calculate_leading_edge(leading_at_start = True)
+        leading_end = calculate_leading_edge(leading_at_start = False)
+
+        logger.info("Leading start edge was %i, end edge was %i", leading_start, leading_end)
+
+        edge_0xy = densify(edge_0xy)
+        edge_1xy = densify(edge_1xy)
+        edge_set = [edge_0xy, edge_1xy]
+
+        dists_start = np.linalg.norm(edge_set[leading_start] - edge_set[not leading_start][0], axis=1)
+        dists_end = np.linalg.norm(edge_set[leading_end] - edge_set[not leading_end][-1], axis=1)
+
+        if not valid_spacing(dists_start) or not valid_spacing(dists_end):
+            return False
+
+        return True
+    
     def edge_pair_roughly_parallel(self, edge_1: Edge, edge_2: Edge, state: FrameState):
         parallel_pair: bool = False
 

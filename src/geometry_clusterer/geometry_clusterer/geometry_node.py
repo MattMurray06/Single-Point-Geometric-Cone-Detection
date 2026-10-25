@@ -43,6 +43,7 @@ class GeometryNode(Node):
         self.declare_parameter('beam_search_angle_deg', 30.0)
         self.declare_parameter('plot_growth', False)
         self.declare_parameter('min_track_width', 2.0)
+        self.declare_parameter('max_track_width', 5.0)
 
         self.algorithm = self.get_parameter('detection_algorithm').get_parameter_value().string_value.lower()
         self.debug = self.get_parameter('debug').value
@@ -82,6 +83,7 @@ class GeometryNode(Node):
         ).value
         self.plot_growth = self.get_parameter('plot_growth').value
         self.min_track_width = self.get_parameter('min_track_width').value
+        self.max_track_width = self.get_parameter('max_track_width').value
 
         self.detection_alg = self.create_detection_algorithm(
             self.algorithm,
@@ -101,6 +103,7 @@ class GeometryNode(Node):
             self.beam_search_angle_deg,
             self.plot_growth,
             self.min_track_width,
+            self.max_track_width,
         )
 
         self.cluster_info_sub_ = self.create_subscription(
@@ -147,6 +150,7 @@ class GeometryNode(Node):
         beam_search_angle_deg: float,
         plot_growth: bool,
         min_track_width: float,
+        max_track_width: float,
     ) -> ConeDetector:
         algorithms: dict[str, type[ConeDetector]] = {
             'cpd': CPD,
@@ -180,8 +184,8 @@ class GeometryNode(Node):
                 wall_density_threshold=wall_density_threshold,
                 max_consecutive_angle_change=max_consecutive_angle_change,
                 plot_growth=plot_growth,
-                max_track_width=track_width,
-                min_track_width=min_track_width
+                max_track_width=max_track_width,
+                min_track_width=min_track_width,
             )
         if algorithm == 'voting':
             return CentreLineVoting(track_width=track_width)
@@ -228,6 +232,12 @@ class GeometryNode(Node):
                     centrelines, clusters_msg.header
                 )
                 self.centreline_pub_.publish(centreline_msg)
+        elif isinstance(self.detection_alg, EdgePropagation):
+            detection_result = self.detection_alg.detect_cones(cluster_centres)
+            if self.cone_pub_ is not None:
+                cone_msg = self.array_to_ros_msg(detection_result, clusters_msg.header)
+
+                self.cone_pub_.publish(cone_msg)
 
         else:
             detection_result = self.detection_alg.detect_cones(cluster_centres)
