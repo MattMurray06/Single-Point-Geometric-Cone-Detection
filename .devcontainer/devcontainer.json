@@ -16,6 +16,8 @@
 
     "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
 
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+
     "containerEnv": {
         "DISPLAY": "${localEnv:DISPLAY}",
         "WAYLAND_DISPLAY": "${localEnv:WAYLAND_DISPLAY}",

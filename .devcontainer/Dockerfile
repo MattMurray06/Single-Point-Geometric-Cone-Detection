@@ -30,6 +30,8 @@ RUN apt-get update \
         libpcl-dev \
         ros-humble-pcl-conversions \
         openssh-client \
+        python3-scipy \
+        python3-matplotlib \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root development user.
