@@ -10,7 +10,7 @@ from rclpy.qos import (
 )
 from visualization_msgs.msg import Marker, MarkerArray
 
-from .cpd import CPD
+# from .cpd import CPD
 from .centreline_voting import CentreLineVoting, CentreLineVotingResult
 from .cone_detector import Cluster, ConeDetector
 from .gaussian_propagation import GaussianPropagation
@@ -153,7 +153,7 @@ class GeometryNode(Node):
         max_track_width: float,
     ) -> ConeDetector:
         algorithms: dict[str, type[ConeDetector]] = {
-            'cpd': CPD,
+            # 'cpd': CPD,
             'voting': CentreLineVoting,
             'centreline propagation': CentreLinePropagation,
             'gaussian propagation': GaussianPropagation,
