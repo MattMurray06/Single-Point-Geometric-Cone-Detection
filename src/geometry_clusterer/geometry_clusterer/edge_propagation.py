@@ -111,8 +111,10 @@ class EdgePropagation(ConeDetector):
 
         cones = np.array([state.clusters[idx] for edge in track_edges for idx in edge.idxs])
 
-        # self.plot_edges(state, track_edges)
-        # self.plot_edges(state, edge_candidates)
+        if self.plot_growth:
+            self.plot_edges(state, track_edges, window="track")
+            self.plot_edges(state, edge_candidates, window="candidates")
+            
         return cones
 
     def find_edges(self, state: FrameState) -> list[Edge]:
@@ -801,10 +803,25 @@ class EdgePropagation(ConeDetector):
         self,
         state: FrameState,
         edges: list[Edge],
+        window: str = "edges",
     ) -> None:
+        """
+        Live top-down plot of edges. One persistent window per `window` name,
+        redrawn each frame without blocking the node.
+        """
         import matplotlib.pyplot as plt
 
-        figure, axes = plt.subplots()
+        # Create each named window once, then reuse it every frame
+        if not hasattr(self, "_plot_windows"):
+            plt.ion()
+            self._plot_windows = {}
+        if window not in self._plot_windows or not plt.fignum_exists(self._plot_windows[window][0].number):
+            new_figure, new_axes = plt.subplots()
+            new_figure.canvas.manager.set_window_title(window)
+            self._plot_windows[window] = (new_figure, new_axes)
+        figure, axes = self._plot_windows[window]
+        axes.clear()
+
         axes.scatter(
             state.clusters[:, 1],
             state.clusters[:, 0],
@@ -852,12 +869,12 @@ class EdgePropagation(ConeDetector):
             )
 
         axes.set_title(
-            f"{len(edges)} hypotheses"
+            f"{window}: {len(edges)} edges"
         )
         axes.set_xlabel("y - lateral / right (m)")
         axes.set_ylabel("x - forward (m)")
-        axes.set_ylim(-60, 60)  # lateral
-        axes.set_xlim(-80, 80)  # forward
+        axes.set_ylim(-50, 50)  # lateral
+        axes.set_xlim(-50, 50)  # forward
         axes.set_aspect("equal", adjustable="box")
         axes.grid(True, alpha=0.25)
         axes.legend(
@@ -868,8 +885,9 @@ class EdgePropagation(ConeDetector):
         )
         figure.tight_layout()
 
-        plt.show(block=True)
-        plt.close(figure)
+        # Non-blocking redraw: refresh the window, then return to the node
+        figure.canvas.draw_idle()
+        plt.pause(0.001)
 
     def nearby_candidates(self, centre_point, edge: Edge, state: FrameState) -> list[CandidateCluster]:
         """

@@ -6,10 +6,9 @@ dataset_publisher:
     loop: true
 
 
-    load_pcd_dir: "/workspaces/Perception-Project/data/ugracing/point-clouds/xyz" # "/workspaces/SARA-Workspace/src/lidar/data/hesai-20260718-165219"
-    # load_pcd_dir: "/workspaces/Perception-Project/data/trackdrive3/hesai-20260719-092739"
-    load_image_dir: "/workspaces/Perception-Project/data/ugracing/images/left"
-    load_odometry_file: "/workspaces/Perception-Project/data/ugracing/odometry.csv"
+    load_pcd_dir: "/workspaces/Single-Point-Geometric-Cone-Detection/data/dataset/point-clouds/xyz"
+    load_image_dir: ""
+    load_odometry_file: "/workspaces/Single-Point-Geometric-Cone-Detection/data/dataset/odometry.csv"
 
 
     output_cloud_topic: "/lidar_points"
