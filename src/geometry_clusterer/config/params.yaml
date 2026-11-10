@@ -8,3 +8,4 @@ geometry_node:
     wall_density_threshold: 1.0
     max_consecutive_angle_change: 30.0
     plot_growth: False
+    min_segment_clusters: 6   # min clusters across both edges of a pair (int)
